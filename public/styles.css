@@ -78,14 +78,30 @@ input::placeholder, textarea::placeholder { color: #a5ada8; }
 .form-footnote { margin: 13px 0 0; color: #89928d; text-align: center; font-size: 11px; }
 
 .progress-panel, .error-panel { margin-top: 18px; border-radius: 16px; border: 1px solid var(--line); background: rgba(255,255,255,.82); padding: 18px 22px; }
+.progress-head { display: flex; align-items: center; justify-content: space-between; gap: 20px; }
 .progress-copy { display: flex; align-items: center; gap: 13px; }
 .progress-copy > div { display: flex; flex-direction: column; gap: 3px; }
 .progress-copy strong { font-size: 13px; }
 .progress-copy span:not(.spinner) { color: var(--muted); font-size: 11px; }
+.progress-time { display: flex; flex-direction: column; align-items: flex-end; gap: 3px; text-align: right; }
+.progress-time strong { color: var(--green); font-size: 11px; }
+.progress-time span { color: var(--muted); font-size: 10px; font-variant-numeric: tabular-nums; }
 .spinner { display: inline-block; width: 20px; height: 20px; border: 2px solid #d3ddd7; border-top-color: var(--green); border-radius: 50%; animation: spin .8s linear infinite; flex: 0 0 auto; }
 @keyframes spin { to { transform: rotate(360deg); } }
-.progress-track { height: 3px; background: #e6ebe7; margin-top: 16px; overflow: hidden; border-radius: 99px; }
+.progress-track { height: 6px; background: #e6ebe7; margin-top: 16px; overflow: hidden; border-radius: 99px; }
 .progress-track span { display: block; width: 0; height: 100%; background: linear-gradient(90deg, var(--green), #72a15c, var(--lime)); transition: width .5s ease; }
+.progress-steps { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; margin: 17px 0 0; padding: 0; list-style: none; }
+.progress-steps li { display: flex; align-items: flex-start; gap: 8px; min-width: 0; color: #919994; }
+.progress-step-mark { width: 9px; height: 9px; margin-top: 3px; border: 2px solid #cbd2cd; border-radius: 50%; flex: 0 0 auto; transition: .2s ease; }
+.progress-steps li > div { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.progress-steps strong { font-size: 10px; line-height: 1.35; }
+.progress-steps li span:last-child { font-size: 9px; line-height: 1.4; }
+.progress-steps li.is-active { color: var(--green); }
+.progress-steps li.is-active .progress-step-mark { border-color: var(--green); background: var(--lime); box-shadow: 0 0 0 4px rgba(200,243,109,.2); }
+.progress-steps li.is-done { color: #50675c; }
+.progress-steps li.is-done .progress-step-mark { border-color: var(--green); background: var(--green); box-shadow: inset 0 0 0 2px white; }
+.progress-steps li.is-skipped { opacity: .5; }
+.summary-estimate { margin: 13px 0 0; padding-top: 11px; border-top: 1px dashed #dce2dd; color: var(--muted); font-size: 9px; text-align: right; }
 .error-panel { border-color: #f0c7bb; background: #fff5f1; display: flex; flex-direction: column; gap: 4px; color: #8d3525; }
 .error-panel span { font-size: 13px; }
 
@@ -120,6 +136,11 @@ input::placeholder, textarea::placeholder { color: #a5ada8; }
 .summary-item p { margin: 7px 0 0; font-family: inherit; font-size: 12px; line-height: 1.65; }
 .summary-loading { display: flex; align-items: center; gap: 12px; color: var(--muted); font-size: 12px; }
 .summary-loading .spinner { width: 16px; height: 16px; }
+.summary-loading > div { width: 100%; display: flex; flex-direction: column; gap: 7px; }
+.summary-loading small { color: #7e8983; font-size: 10px; }
+.summary-progress { height: 3px; overflow: hidden; border-radius: 99px; background: #dfe8e1; }
+.summary-progress span { display: block; width: 42%; height: 100%; border-radius: inherit; background: linear-gradient(90deg, var(--green), var(--lime)); animation: summary-progress 1.6s ease-in-out infinite; }
+@keyframes summary-progress { from { transform: translateX(-110%); } to { transform: translateX(340%); } }
 
 footer { width: min(1120px, calc(100% - 40px)); margin: 0 auto; padding: 25px 0 40px; border-top: 1px solid rgba(19,35,29,.12); display: flex; justify-content: space-between; color: #8a938e; font-size: 11px; }
 
@@ -144,6 +165,10 @@ footer { width: min(1120px, calc(100% - 40px)); margin: 0 auto; padding: 25px 0 
   .article-content .dialogue { display: block; }
   .dialogue strong { display: block; margin-bottom: 3px; }
   .summary-grid { grid-template-columns: 1fr; }
+  .progress-head { align-items: flex-start; }
+  .progress-time { max-width: 42%; }
+  .progress-steps { grid-template-columns: 1fr; gap: 10px; }
+  .summary-estimate { text-align: left; }
   footer { flex-direction: column; gap: 7px; }
 }
 

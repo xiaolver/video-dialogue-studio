@@ -6,6 +6,10 @@ const progressPanel = document.querySelector("#progress-panel");
 const progressTitle = document.querySelector("#progress-title");
 const progressDetail = document.querySelector("#progress-detail");
 const progressBar = document.querySelector("#progress-bar");
+const progressEstimate = document.querySelector("#progress-estimate");
+const progressElapsed = document.querySelector("#progress-elapsed");
+const progressStageElements = new Map([...document.querySelectorAll("[data-progress-stage]")]
+  .map((element) => [element.dataset.progressStage, element]));
 const errorPanel = document.querySelector("#error-panel");
 const errorMessage = document.querySelector("#error-message");
 const resultShell = document.querySelector("#result-shell");
@@ -29,6 +33,11 @@ const state = {
   loadingSummaries: new Set(),
   renderQueued: false,
   helperAvailable: false,
+  progressStartedAt: 0,
+  progressTimer: null,
+  progressStage: "subtitle",
+  progressPercent: 0,
+  audioUsed: false,
 };
 
 function setHelperStatus(status, message) {
@@ -82,7 +91,7 @@ function inlineMarkdown(value) {
 
 function summaryMarkup(index) {
   if (state.loadingSummaries.has(index)) {
-    return `<div class="summary-card summary-loading"><span class="spinner"></span><span>正在结合全文梳理这一章…</span></div>`;
+    return `<div class="summary-card summary-loading"><span class="spinner"></span><div><span>正在结合服务端保存的全文上下文梳理这一章…</span><small>预计 5～15 秒</small><span class="summary-progress"><span></span></span></div></div>`;
   }
   const summary = state.summaries.get(index);
   if (!summary) return "";
@@ -154,10 +163,58 @@ function queueRender() {
 function setProgress(title, detail, percent) {
   progressTitle.textContent = title;
   progressDetail.textContent = detail;
-  progressBar.style.width = `${percent}%`;
+  state.progressPercent = Math.max(state.progressPercent, percent);
+  progressBar.style.width = `${state.progressPercent}%`;
+}
+
+function formatElapsed(totalSeconds) {
+  if (totalSeconds < 60) return `${totalSeconds} 秒`;
+  return `${Math.floor(totalSeconds / 60)} 分 ${String(totalSeconds % 60).padStart(2, "0")} 秒`;
+}
+
+function setProgressStage(stage, { audioUsed = state.audioUsed } = {}) {
+  state.progressStage = stage;
+  state.audioUsed = audioUsed;
+  const statuses = stage === "subtitle"
+    ? { subtitle: "active", audio: "pending", article: "pending" }
+    : stage === "article"
+      ? { subtitle: "done", audio: audioUsed ? "done" : "skipped", article: "active" }
+      : { subtitle: "done", audio: audioUsed ? "done" : "skipped", article: "done" };
+  for (const [name, element] of progressStageElements) {
+    element.classList.remove("is-active", "is-done", "is-skipped");
+    const status = statuses[name];
+    if (status && status !== "pending") element.classList.add(`is-${status}`);
+  }
+  progressEstimate.textContent = stage === "subtitle"
+    ? "总计约 30 秒～3 分钟"
+    : stage === "article" ? "预计剩余 20～60 秒" : "已完成";
+}
+
+function stopProgressClock() {
+  if (state.progressTimer) clearInterval(state.progressTimer);
+  state.progressTimer = null;
+}
+
+function startProgressClock() {
+  stopProgressClock();
+  state.progressStartedAt = Date.now();
+  state.progressPercent = 0;
+  state.audioUsed = false;
+  progressElapsed.textContent = "已用时 0 秒";
+  setProgressStage("subtitle");
+  state.progressTimer = setInterval(() => {
+    const seconds = Math.floor((Date.now() - state.progressStartedAt) / 1_000);
+    progressElapsed.textContent = `已用时 ${formatElapsed(seconds)}`;
+    const ceiling = state.progressStage === "subtitle" ? 32 : state.progressStage === "article" ? 94 : 100;
+    if (state.progressPercent < ceiling) {
+      state.progressPercent = Math.min(ceiling, state.progressPercent + Math.max(.35, (ceiling - state.progressPercent) * .025));
+      progressBar.style.width = `${state.progressPercent}%`;
+    }
+  }, 1_000);
 }
 
 function showError(message) {
+  stopProgressClock();
   errorMessage.textContent = message;
   errorPanel.hidden = false;
   progressPanel.hidden = true;
@@ -180,6 +237,7 @@ async function generate(event) {
   generateButton.disabled = true;
   generateButton.classList.add("is-loading");
   progressPanel.hidden = false;
+  startProgressClock();
   setProgress("正在获取字幕", "连接 YouTube 并选择最合适的字幕轨道", 16);
 
   try {
@@ -190,6 +248,7 @@ async function generate(event) {
       try {
         localTranscript = await getLocalTranscript(videoInput.value);
         const audioTranscribed = localTranscript.language === "audio-transcription";
+        state.audioUsed = audioTranscribed;
         setHelperStatus("ready", audioTranscribed ? "无字幕视频已完成 Gemini 音频转写" : "本机字幕已提取，只向云端提交字幕文本");
         setProgress(audioTranscribed ? "音频转写已就绪" : "本机字幕已就绪", "正在安全提交文本并生成文章", 28);
       } catch (error) {
@@ -215,6 +274,7 @@ async function generate(event) {
     if (!response.body) throw new Error("浏览器不支持流式响应。");
 
     setProgress("字幕已就绪，正在构思", "文章会在下方实时出现", 38);
+    setProgressStage("article", { audioUsed: state.audioUsed });
     resultShell.hidden = false;
     resultShell.scrollIntoView({ behavior: "smooth", block: "start" });
 
@@ -248,6 +308,9 @@ async function generate(event) {
           state.complete = true;
           queueRender();
           setProgress("文章生成完成", `已整理为 ${event.sectionCount} 个章节，可点击 5W1H 继续探索`, 100);
+          setProgressStage("done", { audioUsed: state.audioUsed });
+          stopProgressClock();
+          progressElapsed.textContent = `总用时 ${formatElapsed(Math.floor((Date.now() - state.progressStartedAt) / 1_000))}`;
           setTimeout(() => { progressPanel.hidden = true; }, 1300);
         } else if (event.type === "error") throw new Error(event.message);
       }
