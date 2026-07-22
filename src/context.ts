@@ -9,12 +9,15 @@ const SECTIONS_KEY = "sections";
 const CONTEXT_TTL_MS = 24 * 60 * 60 * 1_000;
 
 type GenerationMetadata = Omit<StoredGeneration, "transcript" | "article" | "sections">;
+type RelayResult = { transcript?: unknown; error?: string };
 
 function json(data: unknown, status = 200): Response {
   return Response.json(data, { status, headers: { "Cache-Control": "no-store" } });
 }
 
 export class GenerationContext extends DurableObject<Env> {
+  private readonly pendingRelayRequests = new Map<string, (result: RelayResult) => void>();
+
   private async readGeneration(): Promise<StoredGeneration | null> {
     const values = await this.ctx.storage.get([GENERATION_KEY, TRANSCRIPT_KEY, ARTICLE_KEY, SECTIONS_KEY]);
     const metadata = values.get(GENERATION_KEY) as GenerationMetadata | undefined;
@@ -29,6 +32,51 @@ export class GenerationContext extends DurableObject<Env> {
 
   async fetch(request: Request): Promise<Response> {
     const url = new URL(request.url);
+
+    if (request.method === "GET" && url.pathname === "/helper/connect") {
+      if (request.headers.get("Upgrade")?.toLowerCase() !== "websocket") {
+        return json({ error: "Expected WebSocket upgrade" }, 426);
+      }
+      for (const existing of this.ctx.getWebSockets("helper")) {
+        try { existing.close(1000, "Replaced by a new helper connection"); } catch { /* already closed */ }
+      }
+      const pair = new WebSocketPair();
+      const [client, server] = Object.values(pair);
+      this.ctx.acceptWebSocket(server, ["helper"]);
+      server.serializeAttachment({ role: "helper", connectedAt: Date.now() });
+      return new Response(null, { status: 101, webSocket: client });
+    }
+
+    if (request.method === "GET" && url.pathname === "/helper/status") {
+      const connected = this.ctx.getWebSockets("helper").some((socket) => socket.readyState === WebSocket.OPEN);
+      return json({ connected });
+    }
+
+    if (request.method === "POST" && url.pathname === "/helper/extract") {
+      const socket = this.ctx.getWebSockets("helper").find((candidate) => candidate.readyState === WebSocket.OPEN);
+      if (!socket) return json({ error: "本机助手尚未连接云端。请重新运行 npm run helper。" }, 409);
+      const { videoUrl } = await request.json<{ videoUrl?: string }>();
+      const requestId = crypto.randomUUID();
+      const result = await new Promise<RelayResult>((resolve) => {
+        const timeout = setTimeout(() => {
+          this.pendingRelayRequests.delete(requestId);
+          resolve({ error: "本机助手提取字幕超时。" });
+        }, 120_000);
+        this.pendingRelayRequests.set(requestId, (value) => {
+          clearTimeout(timeout);
+          this.pendingRelayRequests.delete(requestId);
+          resolve(value);
+        });
+        try {
+          socket.send(JSON.stringify({ type: "extract", requestId, videoUrl }));
+        } catch {
+          clearTimeout(timeout);
+          this.pendingRelayRequests.delete(requestId);
+          resolve({ error: "向本机助手发送任务失败。" });
+        }
+      });
+      return result.error ? json({ error: result.error }, 422) : json({ transcript: result.transcript });
+    }
 
     if (request.method === "PUT" && url.pathname === "/generation") {
       const generation = await request.json<StoredGeneration>();
@@ -78,5 +126,20 @@ export class GenerationContext extends DurableObject<Env> {
 
   async alarm(): Promise<void> {
     await this.ctx.storage.deleteAll();
+  }
+
+  async webSocketMessage(_socket: WebSocket, message: string | ArrayBuffer): Promise<void> {
+    try {
+      const text = typeof message === "string" ? message : new TextDecoder().decode(message);
+      const payload = JSON.parse(text) as { type?: string; requestId?: string; transcript?: unknown; error?: string };
+      if (payload.type !== "result" || !payload.requestId) return;
+      this.pendingRelayRequests.get(payload.requestId)?.({ transcript: payload.transcript, error: payload.error });
+    } catch {
+      // Ignore malformed helper messages; the pending request will time out.
+    }
+  }
+
+  async webSocketClose(socket: WebSocket, code: number, reason: string): Promise<void> {
+    try { socket.close(code, reason); } catch { /* runtime may have completed the close */ }
   }
 }

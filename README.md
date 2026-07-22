@@ -4,7 +4,7 @@
 
 ## 本地运行
 
-需要 Node.js 20+。
+需要 Node.js 22+。
 
 ```bash
 npm install
@@ -33,7 +33,15 @@ winget install yt-dlp.yt-dlp
 npm run helper
 ```
 
-再打开 `https://dialogue.viagoing.com`。视频输入框下方显示“本机助手已连接（家庭网络）”后即可生成。网页会优先走本机助手；助手未运行或提取失败时，才回退到 Worker 直连和 Webshare 代理池。
+命令会生成一次性的随机配对令牌、主动建立到 Cloudflare 的 WebSocket，并自动打开线上页面。输入框下方显示“本机助手已通过 Cloudflare 安全连接”后即可生成。若浏览器没有自动打开，把终端输出的“配对地址”复制到浏览器即可。
+
+本地入口仍可作为备用：
+
+```text
+http://127.0.0.1:3210/
+```
+
+线上页面不会再主动请求 `127.0.0.1`，因此不受 Chrome/Edge 的本地网络访问权限影响。本机助手只建立出站连接，无需公网 IP、端口映射或 Cloudflare Tunnel。Worker 通过 Durable Object 把当前页面的提取任务转发给已配对助手；字幕完成后回传 Worker，再进入原有 Gemini 生成流程。
 
 对于必须登录才能观看、且你有权访问的视频，可以选择读取本机浏览器登录态：
 
@@ -43,7 +51,7 @@ npm run helper:chrome
 npm run helper:edge
 ```
 
-这会让 `yt-dlp` 在本机读取对应浏览器 Cookie，但 Cookie 始终留在本机，接口响应中只有字幕。建议使用普通公开字幕模式；不要把 Cookie 文件、账号密码或浏览器配置上传到 Worker/Git。若浏览器拦截 HTTPS 页面访问回环地址，请允许该站点访问本地网络，然后点击“重新检测”。助手健康检查地址是 `http://127.0.0.1:3210/health`。
+这会让 `yt-dlp` 在本机读取对应浏览器 Cookie，但 Cookie 始终留在本机，接口响应中只有字幕。建议使用普通公开字幕模式；不要把 Cookie 文件、账号密码或浏览器配置上传到 Worker/Git。助手健康检查地址是 `http://127.0.0.1:3210/health`。
 
 ## 一键部署与后续更新
 
@@ -79,7 +87,7 @@ npm run deploy:one-click
 │  └─ styles.css           # 桌面/移动端视觉样式
 ├─ scripts/
 │  ├─ deploy.mjs           # 登录、发布、Secret 和健康检查一键脚本
-│  ├─ youtube-helper.mjs   # 仅监听 127.0.0.1 的字幕助手 HTTP 服务
+│  ├─ youtube-helper.mjs   # 本地字幕服务、随机配对和 Cloudflare WebSocket 客户端
 │  └─ youtube-helper-lib.mjs # yt-dlp 调用、字幕选择与 JSON3/VTT 解析
 ├─ src/
 │  ├─ index.ts             # Worker 入口、API 路由与流式响应
@@ -102,7 +110,9 @@ npm run deploy:one-click
 
 ### YouTube 字幕
 
-前端首先检测 `http://127.0.0.1:3210`。助手可用时，由本机 `yt-dlp` 获取元数据，优先选择人工中文字幕，其次为人工英文、自动中文、自动英文和其他公开字幕，并优先解析 JSON3、回退 VTT。助手只接受允许来源的 CORS 请求、仅绑定回环地址、限制请求体与执行时间。Worker 会再次校验视频 ID、字幕来源和文本长度，拒绝与当前视频不匹配的上下文。
+本机助手启动时生成 256 位随机令牌，并主动连接 `wss://dialogue.viagoing.com/api/helper/connect`。线上页面从 URL fragment 接收令牌后立即移除地址栏片段并保存在浏览器本地；fragment 不会随页面请求发送到服务器。页面提交字幕任务时，Worker 用令牌定位对应 Durable Object，再通过可休眠 WebSocket 把任务推送给本机助手。因为连接方向是“本机 → Cloudflare”，家庭路由器、防火墙和浏览器本地网络策略都不会阻止它。
+
+助手收到任务后由本机 `yt-dlp` 获取元数据，优先选择人工中文字幕，其次为人工英文、自动中文、自动英文和其他公开字幕，并优先解析 JSON3、回退 VTT。回传内容只有视频 ID、标题、语言和最多 40000 字的字幕；浏览器 Cookie、账号密码不会进入 WebSocket。Worker 会再次校验视频 ID、字幕来源和文本长度，拒绝与当前视频不匹配的上下文。
 
 服务端校验并提取 11 位视频 ID，请求 YouTube watch 页面中的 `ytInitialPlayerResponse`，优先选择人工中文字幕，其次是英文字幕与自动字幕。字幕轨道以 JSON3 格式读取，合并片段并保留 `[mm:ss]` 时间戳。输入、字幕长度都有限制，避免异常请求拖垮 Worker。
 
@@ -168,6 +178,9 @@ curl https://<your-worker>.workers.dev/api/health
 
 ## API
 
+- `GET /api/helper/connect?token=…` — 本机助手连接 Durable Object 的 WebSocket 入口。
+- `POST /api/helper/status` — 检查当前随机令牌对应的助手是否在线。
+- `POST /api/helper/extract` — 将 YouTube 字幕任务转发给已配对的本机助手。
 - `POST /api/generate` — `{ videoUrl, instruction?, localTranscript? }`，返回 NDJSON 流；`localTranscript` 由本机助手生成并经 Worker 二次校验。
 - `POST /api/summary` — `{ generationId, sectionIndex }`，返回固定结构的 5W1H。
 - `GET /api/health` — 返回运行模式（`gemini` 或 `demo`）、`youtubeProxy` 是否启用及代理节点数。

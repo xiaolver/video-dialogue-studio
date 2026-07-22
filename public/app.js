@@ -16,7 +16,10 @@ const helperStatus = document.querySelector("#helper-status");
 const helperStatusText = document.querySelector("#helper-status-text");
 const helperRetry = document.querySelector("#helper-retry");
 
-const HELPER_URL = "http://127.0.0.1:3210";
+const isLocalHelperPage = ["127.0.0.1", "localhost"].includes(window.location.hostname);
+const HELPER_URL = isLocalHelperPage ? window.location.origin : "http://127.0.0.1:3210";
+const API_URL = isLocalHelperPage ? "https://dialogue.viagoing.com" : "";
+const apiUrl = (path) => `${API_URL}${path}`;
 
 const state = {
   markdown: "",
@@ -26,7 +29,15 @@ const state = {
   loadingSummaries: new Set(),
   renderQueued: false,
   helperAvailable: false,
+  helperToken: "",
 };
+
+const pairingMatch = /^#helper=([a-f0-9]{64})$/.exec(window.location.hash);
+if (pairingMatch) {
+  localStorage.setItem("youtube-helper-token", pairingMatch[1]);
+  history.replaceState(null, "", `${window.location.pathname}${window.location.search}`);
+}
+state.helperToken = localStorage.getItem("youtube-helper-token") || "";
 
 function fetchLocal(path, options = {}, timeoutMs = 2_000) {
   const controller = new AbortController();
@@ -46,6 +57,26 @@ function setHelperStatus(status, message) {
 
 async function detectHelper() {
   setHelperStatus("checking", "正在检测本机字幕助手…");
+  if (state.helperToken) {
+    try {
+      const response = await fetch(apiUrl("/api/helper/status"), {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ token: state.helperToken }),
+      });
+      const payload = await response.json();
+      if (!response.ok || !payload.connected) throw new Error("not connected");
+      setHelperStatus("ready", "本机助手已通过 Cloudflare 安全连接");
+      return true;
+    } catch {
+      setHelperStatus("error", "已配对，但本机助手当前未连接");
+      return false;
+    }
+  }
+  if (!isLocalHelperPage) {
+    setHelperStatus("error", "本机助手未配对，请运行 npm run helper");
+    return false;
+  }
   try {
     const response = await fetchLocal("/health");
     const payload = await response.json();
@@ -61,6 +92,23 @@ async function detectHelper() {
 }
 
 async function getLocalTranscript(videoUrl) {
+  if (state.helperToken) {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 125_000);
+    try {
+      const response = await fetch(apiUrl("/api/helper/extract"), {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ token: state.helperToken, videoUrl }),
+        signal: controller.signal,
+      });
+      const payload = await response.json();
+      if (!response.ok) throw new Error(payload.error || "本机字幕提取失败。");
+      return payload.transcript;
+    } finally {
+      clearTimeout(timeout);
+    }
+  }
   const response = await fetchLocal("/transcript", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -199,7 +247,7 @@ async function generate(event) {
         setProgress("本机提取失败，正在回退云端", "将尝试 Worker 直连和 Webshare 代理池", 20);
       }
     }
-    const response = await fetch("/api/generate", {
+    const response = await fetch(apiUrl("/api/generate"), {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ videoUrl: videoInput.value, instruction: instructionInput.value, localTranscript }),
@@ -269,7 +317,7 @@ async function loadSummary(index, button) {
   state.loadingSummaries.add(index);
   queueRender();
   try {
-    const response = await fetch("/api/summary", {
+    const response = await fetch(apiUrl("/api/summary"), {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ generationId: state.generationId, sectionIndex: index }),

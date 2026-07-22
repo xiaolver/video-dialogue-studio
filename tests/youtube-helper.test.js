@@ -66,4 +66,19 @@ describe("YouTube local helper", () => {
       await new Promise((resolve) => server.close(resolve));
     }
   });
+
+  it("serves the local UI from the helper origin", async () => {
+    const server = createHelperServer();
+    await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+    try {
+      const address = server.address();
+      const response = await fetch(`http://127.0.0.1:${address.port}/`);
+      expect(response.status).toBe(200);
+      expect(response.headers.get("content-type")).toContain("text/html");
+      expect(await response.text()).toContain("Video Dialogue Studio");
+    } finally {
+      await new Promise((resolve) => server.close(resolve));
+    }
+  });
+
 });

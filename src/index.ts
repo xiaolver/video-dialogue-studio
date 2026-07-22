@@ -2,14 +2,43 @@ import { streamArticle } from "./gemini";
 import { validateLocalTranscript } from "./local-transcript";
 import { parseArticleSections } from "./sections";
 import type { Env, StoredGeneration, TranscriptResult } from "./types";
-import { getYouTubeTranscript, TranscriptError } from "./youtube";
+import { getYouTubeTranscript, parseYouTubeVideoId, TranscriptError } from "./youtube";
 
 export { GenerationContext } from "./context";
 
 const MAX_INSTRUCTION_LENGTH = 1_200;
+const LOCAL_APP_ORIGINS = new Set([
+  "http://127.0.0.1:3210",
+  "http://localhost:3210",
+]);
+const HELPER_TOKEN_PATTERN = /^[a-f0-9]{64}$/;
 
 function json(data: unknown, status = 200): Response {
   return Response.json(data, { status, headers: { "Cache-Control": "no-store" } });
+}
+
+function withApiCors(request: Request, response: Response): Response {
+  const origin = request.headers.get("Origin");
+  if (origin && LOCAL_APP_ORIGINS.has(origin)) {
+    response.headers.set("Access-Control-Allow-Origin", origin);
+    response.headers.set("Vary", "Origin");
+  }
+  return response;
+}
+
+function apiPreflight(request: Request): Response {
+  const origin = request.headers.get("Origin");
+  if (!origin || !LOCAL_APP_ORIGINS.has(origin)) return new Response(null, { status: 403 });
+  return new Response(null, {
+    status: 204,
+    headers: {
+      "Access-Control-Allow-Origin": origin,
+      "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
+      "Access-Control-Allow-Headers": "Content-Type",
+      "Access-Control-Max-Age": "86400",
+      Vary: "Origin",
+    },
+  });
 }
 
 async function readJson<T>(request: Request): Promise<T> {
@@ -26,6 +55,43 @@ function errorMessage(error: unknown): string {
 
 function contextStub(env: Env, generationId: string): DurableObjectStub {
   return env.GENERATION_CONTEXTS.get(env.GENERATION_CONTEXTS.idFromName(generationId));
+}
+
+function helperStub(env: Env, token: string): DurableObjectStub {
+  return env.GENERATION_CONTEXTS.get(env.GENERATION_CONTEXTS.idFromName(`helper:${token}`));
+}
+
+function validHelperToken(value: unknown): value is string {
+  return typeof value === "string" && HELPER_TOKEN_PATTERN.test(value);
+}
+
+async function handleHelperConnect(request: Request, env: Env): Promise<Response> {
+  const token = new URL(request.url).searchParams.get("token");
+  if (!validHelperToken(token)) return json({ error: "无效的本机助手配对令牌。" }, 400);
+  return helperStub(env, token).fetch("https://context/helper/connect", {
+    headers: { Upgrade: request.headers.get("Upgrade") || "" },
+  });
+}
+
+async function handleHelperStatus(request: Request, env: Env): Promise<Response> {
+  let body: { token?: unknown };
+  try { body = await readJson(request); } catch (error) { return json({ error: errorMessage(error) }, 400); }
+  if (!validHelperToken(body.token)) return json({ error: "无效的本机助手配对令牌。" }, 400);
+  return helperStub(env, body.token).fetch("https://context/helper/status");
+}
+
+async function handleHelperExtract(request: Request, env: Env): Promise<Response> {
+  let body: { token?: unknown; videoUrl?: unknown };
+  try { body = await readJson(request); } catch (error) { return json({ error: errorMessage(error) }, 400); }
+  if (!validHelperToken(body.token)) return json({ error: "无效的本机助手配对令牌。" }, 400);
+  if (typeof body.videoUrl !== "string" || !parseYouTubeVideoId(body.videoUrl)) {
+    return json({ error: "请输入有效的 YouTube 视频链接。" }, 400);
+  }
+  return helperStub(env, body.token).fetch("https://context/helper/extract", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ videoUrl: body.videoUrl }),
+  });
 }
 
 async function handleGenerate(request: Request, env: Env, execution: ExecutionContext): Promise<Response> {
@@ -151,18 +217,31 @@ async function handleSummary(request: Request, env: Env): Promise<Response> {
 export default {
   async fetch(request: Request, env: Env, execution: ExecutionContext): Promise<Response> {
     const url = new URL(request.url);
-    if (request.method === "POST" && url.pathname === "/api/generate") return handleGenerate(request, env, execution);
-    if (request.method === "POST" && url.pathname === "/api/summary") return handleSummary(request, env);
+    if (request.method === "OPTIONS" && url.pathname.startsWith("/api/")) return apiPreflight(request);
+    if (request.method === "GET" && url.pathname === "/api/helper/connect") return handleHelperConnect(request, env);
+    if (request.method === "POST" && url.pathname === "/api/helper/status") {
+      return withApiCors(request, await handleHelperStatus(request, env));
+    }
+    if (request.method === "POST" && url.pathname === "/api/helper/extract") {
+      return withApiCors(request, await handleHelperExtract(request, env));
+    }
+    if (request.method === "POST" && url.pathname === "/api/generate") {
+      return withApiCors(request, await handleGenerate(request, env, execution));
+    }
+    if (request.method === "POST" && url.pathname === "/api/summary") {
+      return withApiCors(request, await handleSummary(request, env));
+    }
     if (request.method === "GET" && url.pathname === "/api/health") {
       const proxySetting = env.WEBSHARE_PROXY_URLS || env.WEBSHARE_PROXY_URL;
-      return json({
+      return withApiCors(request, json({
         ok: true,
         mode: env.GEMINI_API_KEY ? "gemini" : "demo",
         youtubeProxy: Boolean(proxySetting),
         youtubeProxyCount: proxySetting?.split(/[\r\n,;]+/).filter((value) => value.trim()).length ?? 0,
-      });
+        helperRelay: true,
+      }));
     }
-    if (url.pathname.startsWith("/api/")) return json({ error: "Not found" }, 404);
+    if (url.pathname.startsWith("/api/")) return withApiCors(request, json({ error: "Not found" }, 404));
     return env.ASSETS.fetch(request);
   },
 } satisfies ExportedHandler<Env>;
