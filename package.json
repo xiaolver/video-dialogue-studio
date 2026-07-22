@@ -5,6 +5,9 @@
   "type": "module",
   "scripts": {
     "dev": "wrangler dev",
+    "helper": "node scripts/youtube-helper.mjs",
+    "helper:chrome": "node scripts/youtube-helper.mjs --browser chrome",
+    "helper:edge": "node scripts/youtube-helper.mjs --browser edge",
     "deploy": "wrangler deploy",
     "deploy:one-click": "node scripts/deploy.mjs",
     "typecheck": "tsc --noEmit",

@@ -35,7 +35,7 @@ export function parseYouTubeVideoId(input: string): string | null {
     let id: string | null = null;
 
     if (host === "youtu.be") id = url.pathname.split("/").filter(Boolean)[0] ?? null;
-    if (host.endsWith("youtube.com")) {
+    if (host === "youtube.com" || host.endsWith(".youtube.com")) {
       if (url.pathname === "/watch") id = url.searchParams.get("v");
       if (url.pathname.startsWith("/shorts/") || url.pathname.startsWith("/embed/")) {
         id = url.pathname.split("/").filter(Boolean)[1] ?? null;

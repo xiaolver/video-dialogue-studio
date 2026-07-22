@@ -12,6 +12,11 @@ const resultShell = document.querySelector("#result-shell");
 const articleElement = document.querySelector("#article");
 const sourceBadge = document.querySelector("#source-badge");
 const videoTitle = document.querySelector("#video-title");
+const helperStatus = document.querySelector("#helper-status");
+const helperStatusText = document.querySelector("#helper-status-text");
+const helperRetry = document.querySelector("#helper-retry");
+
+const HELPER_URL = "http://127.0.0.1:3210";
 
 const state = {
   markdown: "",
@@ -20,7 +25,51 @@ const state = {
   summaries: new Map(),
   loadingSummaries: new Set(),
   renderQueued: false,
+  helperAvailable: false,
 };
+
+function fetchLocal(path, options = {}, timeoutMs = 2_000) {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
+  return fetch(`${HELPER_URL}${path}`, {
+    ...options,
+    signal: controller.signal,
+    targetAddressSpace: "local",
+  }).finally(() => clearTimeout(timeout));
+}
+
+function setHelperStatus(status, message) {
+  state.helperAvailable = status === "ready";
+  helperStatus.className = `helper-status is-${status}`;
+  helperStatusText.textContent = message;
+}
+
+async function detectHelper() {
+  setHelperStatus("checking", "正在检测本机字幕助手…");
+  try {
+    const response = await fetchLocal("/health");
+    const payload = await response.json();
+    if (!response.ok || !payload.ok) throw new Error("not ready");
+    setHelperStatus("ready", payload.browserCookies
+      ? `本机助手已连接（${payload.browserCookies} 登录态）`
+      : "本机助手已连接（家庭网络）");
+    return true;
+  } catch {
+    setHelperStatus("error", "本机助手未启动，将回退云端");
+    return false;
+  }
+}
+
+async function getLocalTranscript(videoUrl) {
+  const response = await fetchLocal("/transcript", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ videoUrl }),
+  }, 120_000);
+  const payload = await response.json();
+  if (!response.ok) throw new Error(payload.error || "本机字幕提取失败。");
+  return payload;
+}
 
 function escapeHtml(value) {
   return value.replace(/[&<>"']/g, (char) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[char]);
@@ -136,14 +185,33 @@ async function generate(event) {
   setProgress("正在获取字幕", "连接 YouTube 并选择最合适的字幕轨道", 16);
 
   try {
+    let localTranscript;
+    let localError = "";
+    if (state.helperAvailable || await detectHelper()) {
+      setProgress("本机正在提取字幕", "通过你的家庭网络运行 yt-dlp，不上传登录凭据", 16);
+      try {
+        localTranscript = await getLocalTranscript(videoInput.value);
+        setHelperStatus("ready", "本机字幕已提取，只向云端提交字幕文本");
+        setProgress("本机字幕已就绪", "正在安全提交字幕文本并生成文章", 28);
+      } catch (error) {
+        localError = error instanceof Error ? error.message : "本机字幕提取失败。";
+        setHelperStatus("error", `本机提取失败：${localError}`);
+        setProgress("本机提取失败，正在回退云端", "将尝试 Worker 直连和 Webshare 代理池", 20);
+      }
+    }
     const response = await fetch("/api/generate", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ videoUrl: videoInput.value, instruction: instructionInput.value }),
+      body: JSON.stringify({ videoUrl: videoInput.value, instruction: instructionInput.value, localTranscript }),
     });
     if (!response.ok) {
       const payload = await response.json();
-      throw new Error(payload.error || "请求失败，请稍后再试。");
+      const message = payload.error || "请求失败，请稍后再试。";
+      const helperHint = !state.helperAvailable && /YouTube|验证码|代理|字幕/.test(message)
+        ? " 请在项目目录运行 `npm run helper`，保持窗口开启后重试。"
+        : "";
+      const localDetail = localError ? ` 本机助手错误：${localError}` : "";
+      throw new Error(`${message}${helperHint}${localDetail}`);
     }
     if (!response.body) throw new Error("浏览器不支持流式响应。");
 
@@ -167,8 +235,10 @@ async function generate(event) {
           videoTitle.textContent = event.videoTitle;
           sourceBadge.textContent = event.transcriptSource === "demo"
             ? "内置字幕"
-            : event.transcriptSource === "youtube-proxy" ? "Webshare 代理字幕" : "YouTube 字幕";
-          sourceBadge.className = `source-badge ${event.transcriptSource === "demo" ? "is-demo" : event.transcriptSource === "youtube-proxy" ? "is-proxy" : ""}`;
+            : event.transcriptSource === "youtube-proxy"
+              ? "Webshare 代理字幕"
+              : event.transcriptSource === "local-helper" ? "本机字幕" : "YouTube 字幕";
+          sourceBadge.className = `source-badge ${event.transcriptSource === "demo" ? "is-demo" : event.transcriptSource === "youtube-proxy" ? "is-proxy" : event.transcriptSource === "local-helper" ? "is-local" : ""}`;
           setProgress("正在流式撰写", event.provider === "gemini" ? "Gemini 正在组织章节与对话" : "演示模式 · 配置 API Key 后使用 Gemini", 62);
         } else if (event.type === "delta") {
           state.markdown += event.text;
@@ -228,3 +298,5 @@ articleElement.addEventListener("click", (event) => {
   const button = event.target.closest(".summary-button");
   if (button) loadSummary(Number(button.dataset.sectionIndex), button);
 });
+helperRetry.addEventListener("click", detectHelper);
+detectHelper();

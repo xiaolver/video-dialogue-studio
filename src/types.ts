@@ -12,7 +12,7 @@ export interface TranscriptResult {
   title: string;
   language: string;
   text: string;
-  source: "youtube" | "youtube-proxy" | "demo";
+  source: "youtube" | "youtube-proxy" | "local-helper" | "demo";
 }
 
 export interface ArticleSection {

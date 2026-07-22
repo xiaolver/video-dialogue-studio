@@ -1,6 +1,7 @@
 import { streamArticle } from "./gemini";
+import { validateLocalTranscript } from "./local-transcript";
 import { parseArticleSections } from "./sections";
-import type { Env, StoredGeneration } from "./types";
+import type { Env, StoredGeneration, TranscriptResult } from "./types";
 import { getYouTubeTranscript, TranscriptError } from "./youtube";
 
 export { GenerationContext } from "./context";
@@ -28,7 +29,7 @@ function contextStub(env: Env, generationId: string): DurableObjectStub {
 }
 
 async function handleGenerate(request: Request, env: Env, execution: ExecutionContext): Promise<Response> {
-  let body: { videoUrl?: string; instruction?: string };
+  let body: { videoUrl?: string; instruction?: string; localTranscript?: unknown };
   try {
     body = await readJson(request);
   } catch (error) {
@@ -40,9 +41,11 @@ async function handleGenerate(request: Request, env: Env, execution: ExecutionCo
   if (!videoUrl || videoUrl.length > 500) return json({ error: "请输入有效的 YouTube 视频链接。" }, 400);
   if (instruction.length > MAX_INSTRUCTION_LENGTH) return json({ error: `生成要求不能超过 ${MAX_INSTRUCTION_LENGTH} 字。` }, 400);
 
-  let transcript;
+  let transcript: TranscriptResult;
   try {
-    transcript = await getYouTubeTranscript(videoUrl, env.WEBSHARE_PROXY_URLS || env.WEBSHARE_PROXY_URL);
+    transcript = body.localTranscript
+      ? validateLocalTranscript(body.localTranscript, videoUrl)
+      : await getYouTubeTranscript(videoUrl, env.WEBSHARE_PROXY_URLS || env.WEBSHARE_PROXY_URL);
   } catch (error) {
     return json({ error: errorMessage(error) }, error instanceof TranscriptError && error.code === "INVALID_URL" ? 400 : 422);
   }
