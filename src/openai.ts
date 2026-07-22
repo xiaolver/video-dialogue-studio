@@ -82,11 +82,29 @@ ${preference}
 async function openAIError(response: Response, operation: string): Promise<Error> {
   const body = await response.text();
   let detail = body.slice(0, 400);
+  let code = "";
+  let type = "";
   try {
-    const payload = JSON.parse(body) as { error?: { message?: string } };
+    const payload = JSON.parse(body) as { error?: { message?: string; code?: string; type?: string } };
     if (payload.error?.message) detail = payload.error.message;
+    code = payload.error?.code ?? "";
+    type = payload.error?.type ?? "";
   } catch {
     // Keep the bounded raw response.
+  }
+
+  if (response.status === 429 && (
+    code === "insufficient_quota"
+    || type === "insufficient_quota"
+    || /exceeded your current quota|billing details/i.test(detail)
+  )) {
+    return new Error("OpenAI API 当前没有可用额度。请在 OpenAI Platform 为这个 API 项目启用账单或充值后重试；ChatGPT Plus/Pro 订阅不包含 API 额度。");
+  }
+  if (response.status === 429) {
+    return new Error(`OpenAI ${operation}请求过于频繁，请稍后重试。`);
+  }
+  if (response.status === 401) {
+    return new Error("OpenAI API Key 无效或已失效，请检查本地 OPENAI_API_KEY 后重新部署。");
   }
   return new Error(`OpenAI ${operation}失败（${response.status}）：${detail}`);
 }

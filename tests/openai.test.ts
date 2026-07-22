@@ -69,4 +69,24 @@ describe("OpenAI provider", () => {
     expect(init?.body).toBeInstanceOf(FormData);
     expect((init?.body as FormData).get("model")).toBe("gpt-transcribe-test");
   });
+
+  it("distinguishes exhausted API quota from request rate limiting", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(Response.json({
+      error: {
+        message: "You exceeded your current quota, please check your plan and billing details.",
+        type: "insufficient_quota",
+        code: "insufficient_quota",
+      },
+    }, { status: 429 }));
+
+    const audio = {
+      videoId: transcript.videoId,
+      title: transcript.title,
+      duration: 12,
+      mimeType: "audio/mpeg",
+      data: btoa("fake mp3"),
+    };
+    await expect(transcribeAudio(audio, "sk-test", "gpt-transcribe-test"))
+      .rejects.toThrow("OpenAI API 当前没有可用额度");
+  });
 });
