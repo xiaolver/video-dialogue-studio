@@ -80,7 +80,7 @@ Wrangler 默认地址为 <http://localhost:8787>。
 
 ```dotenv
 MINIMAX_API_KEY=你的_MiniMax_API_Key
-MINIMAX_MODEL=MiniMax-M2.7
+MINIMAX_MODEL=MiniMax-M3
 MINIMAX_BASE_URL=https://api.minimaxi.com/v1
 WEBSHARE_PROXY_URLS=http://用户名:密码@IP:端口,http://用户名:密码@IP:端口
 ```
@@ -88,7 +88,7 @@ WEBSHARE_PROXY_URLS=http://用户名:密码@IP:端口,http://用户名:密码@IP
 | 配置 | 必填 | 说明 |
 | --- | --- | --- |
 | `MINIMAX_API_KEY` | 是 | MiniMax 文章生成、5W1H，同时作为本机助手连接凭据 |
-| `MINIMAX_MODEL` | 否 | 默认 `MiniMax-M2.7` |
+| `MINIMAX_MODEL` | 否 | 默认 `MiniMax-M3` |
 | `MINIMAX_BASE_URL` | 否 | 中国区默认 `https://api.minimaxi.com/v1`；国际区密钥使用 `https://api.minimax.io/v1` |
 | `WEBSHARE_PROXY_URLS` | 否 | 云端直连 YouTube 失败后的代理池回退 |
 

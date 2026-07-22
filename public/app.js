@@ -300,7 +300,7 @@ async function generate(event) {
               ? "Webshare 代理字幕"
               : event.transcriptSource === "local-helper" ? "本机字幕" : "YouTube 字幕";
           sourceBadge.className = `source-badge ${event.transcriptSource === "demo" ? "is-demo" : event.transcriptSource === "youtube-proxy" ? "is-proxy" : event.transcriptSource === "local-helper" ? "is-local" : ""}`;
-          setProgress("正在流式撰写", event.provider === "minimax" ? "MiniMax 正在组织章节与对话" : "演示模式 · 配置 API Key 后使用 MiniMax", 62);
+          setProgress("正在流式撰写", event.provider === "minimax" ? `${event.model || "MiniMax-M3"} 正在组织章节与对话` : "演示模式 · 配置 API Key 后使用 MiniMax", 62);
         } else if (event.type === "delta") {
           state.markdown += event.text;
           queueRender();

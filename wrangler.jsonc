@@ -32,7 +32,7 @@
     }
   ],
   "vars": {
-    "MINIMAX_MODEL": "MiniMax-M2.7",
+    "MINIMAX_MODEL": "MiniMax-M3",
     "MINIMAX_BASE_URL": "https://api.minimaxi.com/v1"
   },
   "observability": {

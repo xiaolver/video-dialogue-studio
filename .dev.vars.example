@@ -1,4 +1,4 @@
 MINIMAX_API_KEY=
-MINIMAX_MODEL=MiniMax-M2.7
+MINIMAX_MODEL=MiniMax-M3
 MINIMAX_BASE_URL=https://api.minimaxi.com/v1
 # WEBSHARE_PROXY_URLS=http://username:password@proxy-host:proxy-port

@@ -159,6 +159,7 @@ async function handleGenerate(request: Request, env: Env, execution: ExecutionCo
       transcriptSource: transcript.source,
       transcriptLanguage: transcript.language,
       provider: env.MINIMAX_API_KEY ? "minimax" : "demo",
+      model: env.MINIMAX_MODEL || "MiniMax-M3",
     });
     try {
       for await (const delta of streamArticle(
@@ -249,6 +250,7 @@ export default {
       return withApiCors(request, json({
         ok: true,
         mode: env.MINIMAX_API_KEY ? "minimax" : "demo",
+        model: env.MINIMAX_MODEL || "MiniMax-M3",
         transcription: "cloudflare-whisper",
         youtubeProxy: Boolean(proxySetting),
         youtubeProxyCount: proxySetting?.split(/[\r\n,;]+/).filter((value) => value.trim()).length ?? 0,

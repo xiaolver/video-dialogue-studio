@@ -1,7 +1,7 @@
 import type { FiveWOneH, StoredGeneration, TranscriptResult } from "./types";
 
 const DEFAULT_BASE_URL = "https://api.minimaxi.com/v1";
-const DEFAULT_MODEL = "MiniMax-M2.7";
+const DEFAULT_MODEL = "MiniMax-M3";
 const WHISPER_MODEL = "@cf/openai/whisper-large-v3-turbo";
 
 interface MiniMaxChoice {
