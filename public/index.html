@@ -1,0 +1,94 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="description" content="把 YouTube 长视频流式整理成清晰、可追问的中文对话文章。" />
+    <title>译谈 · Video Dialogue Studio</title>
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <div class="page-glow page-glow-a"></div>
+    <div class="page-glow page-glow-b"></div>
+    <header class="site-header">
+      <a class="brand" href="/" aria-label="译谈首页">
+        <span class="brand-mark" aria-hidden="true">译</span>
+        <span>译谈</span>
+      </a>
+      <div class="header-note"><span class="live-dot"></span> Gemini 流式生成</div>
+    </header>
+
+    <main>
+      <section class="hero">
+        <div class="eyebrow">VIDEO → DIALOGUE</div>
+        <h1>让长视频，变成<br /><em>值得读完</em>的中文对话</h1>
+        <p>提取 YouTube 字幕，保留观点碰撞与关键细节。边生成、边阅读，还能对每个章节做 5W1H 梳理。</p>
+      </section>
+
+      <section class="workspace" aria-labelledby="create-heading">
+        <div class="workspace-topline"></div>
+        <form id="generate-form">
+          <div class="form-heading">
+            <div>
+              <span class="step-number">01</span>
+              <h2 id="create-heading">从一个视频开始</h2>
+            </div>
+            <button class="sample-button" type="button" id="sample-button">使用示例视频</button>
+          </div>
+
+          <label for="video-url">YouTube 视频链接</label>
+          <div class="url-field">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M21.6 7.2a2.9 2.9 0 0 0-2-2C17.8 4.7 12 4.7 12 4.7s-5.8 0-7.6.5a2.9 2.9 0 0 0-2 2A30 30 0 0 0 2 12a30 30 0 0 0 .4 4.8 2.9 2.9 0 0 0 2 2c1.8.5 7.6.5 7.6.5s5.8 0 7.6-.5a2.9 2.9 0 0 0 2-2A30 30 0 0 0 22 12a30 30 0 0 0-.4-4.8ZM10 15.2V8.8l5.5 3.2-5.5 3.2Z"/></svg>
+            <input id="video-url" name="videoUrl" type="url" placeholder="https://www.youtube.com/watch?v=..." required />
+          </div>
+
+          <div class="label-row">
+            <label for="instruction">你希望怎么写？</label>
+            <span>可选 · 最多 1200 字</span>
+          </div>
+          <textarea id="instruction" name="instruction" maxlength="1200" rows="3" placeholder="例如：面向没有技术背景的创业者，语气克制，保留商业数据与双方分歧……"></textarea>
+          <div class="suggestions" aria-label="生成要求示例">
+            <button type="button" data-suggestion="面向没有技术背景的创业者，解释清楚专业概念">给创业者看</button>
+            <button type="button" data-suggestion="保持杂志特稿风格，语言克制，突出双方的分歧与论据">杂志特稿风</button>
+            <button type="button" data-suggestion="控制在 2000 字以内，保留所有关键数字和结论">精炼且保留数据</button>
+          </div>
+
+          <button class="generate-button" type="submit" id="generate-button">
+            <span>开始生成对话文章</span>
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m9 18 6-6-6-6"/></svg>
+          </button>
+          <p class="form-footnote">公开字幕会由服务端读取；示例视频在 YouTube 验证失败时自动使用内置字幕。</p>
+        </form>
+      </section>
+
+      <section class="progress-panel" id="progress-panel" hidden aria-live="polite">
+        <div class="progress-copy">
+          <span class="spinner" aria-hidden="true"></span>
+          <div><strong id="progress-title">正在获取字幕</strong><span id="progress-detail">这通常只需要几秒</span></div>
+        </div>
+        <div class="progress-track"><span id="progress-bar"></span></div>
+      </section>
+
+      <section class="error-panel" id="error-panel" hidden role="alert">
+        <strong>暂时没有生成成功</strong><span id="error-message"></span>
+      </section>
+
+      <section class="result-shell" id="result-shell" hidden>
+        <div class="result-toolbar">
+          <div>
+            <span class="step-number">02</span>
+            <p>生成结果</p>
+          </div>
+          <div class="result-meta">
+            <span class="source-badge" id="source-badge"></span>
+            <span id="video-title"></span>
+          </div>
+        </div>
+        <article id="article" class="article-content"></article>
+      </section>
+    </main>
+
+    <footer><span>译谈 Video Dialogue Studio</span><span>字幕是素材，观点属于说话者</span></footer>
+    <script type="module" src="/app.js"></script>
+  </body>
+</html>

@@ -1,0 +1,37 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "video-dialogue-studio",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-07-01",
+  "assets": {
+    "directory": "./public",
+    "binding": "ASSETS",
+    "run_worker_first": ["/api/*"]
+  },
+  "routes": [
+    {
+      "pattern": "dialogue.viagoing.com",
+      "custom_domain": true
+    }
+  ],
+  "durable_objects": {
+    "bindings": [
+      {
+        "name": "GENERATION_CONTEXTS",
+        "class_name": "GenerationContext"
+      }
+    ]
+  },
+  "migrations": [
+    {
+      "tag": "v1",
+      "new_sqlite_classes": ["GenerationContext"]
+    }
+  ],
+  "vars": {
+    "GEMINI_MODEL": "gemini-flash-latest"
+  },
+  "observability": {
+    "enabled": true
+  }
+}
