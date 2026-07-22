@@ -244,12 +244,12 @@ async function generate(event) {
     let localTranscript;
     let localError = "";
     if (state.helperAvailable || await detectHelper()) {
-      setProgress("本机正在提取字幕", "没有公开字幕时会自动下载音频并由 OpenAI 转写", 16);
+      setProgress("本机正在提取字幕", "没有公开字幕时会自动下载音频并由 Cloudflare Whisper 转写", 16);
       try {
         localTranscript = await getLocalTranscript(videoInput.value);
         const audioTranscribed = localTranscript.language === "audio-transcription";
         state.audioUsed = audioTranscribed;
-        setHelperStatus("ready", audioTranscribed ? "无字幕视频已完成 OpenAI 音频转写" : "本机字幕已提取，只向云端提交字幕文本");
+        setHelperStatus("ready", audioTranscribed ? "无字幕视频已完成 Cloudflare Whisper 音频转写" : "本机字幕已提取，只向云端提交字幕文本");
         setProgress(audioTranscribed ? "音频转写已就绪" : "本机字幕已就绪", "正在安全提交文本并生成文章", 28);
       } catch (error) {
         localError = error instanceof Error ? error.message : "本机字幕提取失败。";
@@ -300,7 +300,7 @@ async function generate(event) {
               ? "Webshare 代理字幕"
               : event.transcriptSource === "local-helper" ? "本机字幕" : "YouTube 字幕";
           sourceBadge.className = `source-badge ${event.transcriptSource === "demo" ? "is-demo" : event.transcriptSource === "youtube-proxy" ? "is-proxy" : event.transcriptSource === "local-helper" ? "is-local" : ""}`;
-          setProgress("正在流式撰写", event.provider === "openai" ? "OpenAI GPT 正在组织章节与对话" : "演示模式 · 配置 API Key 后使用 OpenAI GPT", 62);
+          setProgress("正在流式撰写", event.provider === "minimax" ? "MiniMax 正在组织章节与对话" : "演示模式 · 配置 API Key 后使用 MiniMax", 62);
         } else if (event.type === "delta") {
           state.markdown += event.text;
           queueRender();

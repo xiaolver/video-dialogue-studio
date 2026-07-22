@@ -18,7 +18,7 @@ function loadLocalVars() {
   if (localVars) return localVars;
   const varsPath = resolve(root, ".dev.vars");
   if (!existsSync(varsPath)) {
-    fail("未找到 .dev.vars。请复制 .dev.vars.example 并配置 OPENAI_API_KEY。");
+    fail("未找到 .dev.vars。请复制 .dev.vars.example 并配置 MINIMAX_API_KEY。");
   }
   localVars = new Map();
   for (const rawLine of readFileSync(varsPath, "utf8").split(/\r?\n/)) {
@@ -93,7 +93,7 @@ async function verifyDeployment(expectYoutubeProxy) {
       const response = await fetch(`${publicUrl}/api/health`, { signal: AbortSignal.timeout(10_000) });
       if (response.ok) {
         const health = await response.json();
-        if (health.mode === "openai" && (!expectYoutubeProxy || health.youtubeProxy)) {
+        if (health.mode === "minimax" && health.transcription === "cloudflare-whisper" && (!expectYoutubeProxy || health.youtubeProxy)) {
           console.log(`部署完成：${publicUrl}`);
           console.log(`运行模式：${health.mode}`);
           console.log(`YouTube 代理：${health.youtubeProxy ? `已启用（${health.youtubeProxyCount ?? 1} 个节点）` : "未配置"}`);
@@ -105,11 +105,11 @@ async function verifyDeployment(expectYoutubeProxy) {
     }
     await new Promise((resolvePromise) => setTimeout(resolvePromise, 3_000));
   }
-  fail(`部署已提交，但 OpenAI 或代理 Secret 暂未完成传播。请稍后再次运行健康检查。`);
+  fail(`部署已提交，但 MiniMax 或代理 Secret 暂未完成传播。请稍后再次运行健康检查。`);
 }
 
 if (!existsSync(wrangler)) fail("依赖尚未安装，请先运行 npm install。");
-const openAIKey = loadSecret("OPENAI_API_KEY", true);
+const minimaxKey = loadSecret("MINIMAX_API_KEY", true);
 const webshareProxyUrls = loadSecret("WEBSHARE_PROXY_URLS") || loadSecret("WEBSHARE_PROXY_URL");
 
 console.log("[1/4] 检查 Cloudflare 登录状态");
@@ -133,8 +133,8 @@ if (deployment.status !== 0) {
 }
 
 console.log("\n[3/4] 更新线上 Secrets");
-const openAISecret = runWranglerWithRetry(["secret", "put", "OPENAI_API_KEY"], `${openAIKey}\n`);
-if (openAISecret.status !== 0) fail("Worker 已部署，但 OpenAI Secret 更新失败。");
+const minimaxSecret = runWranglerWithRetry(["secret", "put", "MINIMAX_API_KEY"], `${minimaxKey}\n`);
+if (minimaxSecret.status !== 0) fail("Worker 已部署，但 MiniMax Secret 更新失败。");
 if (webshareProxyUrls) {
   const proxySecret = runWranglerWithRetry(
     ["secret", "put", "WEBSHARE_PROXY_URLS"],

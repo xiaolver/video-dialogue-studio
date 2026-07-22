@@ -1,4 +1,4 @@
-import { streamArticle } from "./openai";
+import { streamArticle } from "./minimax";
 import { validateLocalTranscript } from "./local-transcript";
 import { parseArticleSections } from "./sections";
 import type { Env, StoredGeneration, TranscriptResult } from "./types";
@@ -61,8 +61,8 @@ function helperStub(env: Env): DurableObjectStub {
 }
 
 async function expectedHelperProtocol(env: Env): Promise<string | null> {
-  if (!env.OPENAI_API_KEY) return null;
-  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(env.OPENAI_API_KEY));
+  if (!env.MINIMAX_API_KEY) return null;
+  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(env.MINIMAX_API_KEY));
   return `helper-${[...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, "0")).join("")}`;
 }
 
@@ -158,10 +158,16 @@ async function handleGenerate(request: Request, env: Env, execution: ExecutionCo
       videoTitle: transcript.title,
       transcriptSource: transcript.source,
       transcriptLanguage: transcript.language,
-      provider: env.OPENAI_API_KEY ? "openai" : "demo",
+      provider: env.MINIMAX_API_KEY ? "minimax" : "demo",
     });
     try {
-      for await (const delta of streamArticle(transcript, instruction, env.OPENAI_API_KEY, env.OPENAI_MODEL)) {
+      for await (const delta of streamArticle(
+        transcript,
+        instruction,
+        env.MINIMAX_API_KEY,
+        env.MINIMAX_MODEL,
+        env.MINIMAX_BASE_URL,
+      )) {
         article += delta;
         send({ type: "delta", text: delta });
       }
@@ -242,7 +248,8 @@ export default {
         .catch(() => ({}));
       return withApiCors(request, json({
         ok: true,
-        mode: env.OPENAI_API_KEY ? "openai" : "demo",
+        mode: env.MINIMAX_API_KEY ? "minimax" : "demo",
+        transcription: "cloudflare-whisper",
         youtubeProxy: Boolean(proxySetting),
         youtubeProxyCount: proxySetting?.split(/[\r\n,;]+/).filter((value) => value.trim()).length ?? 0,
         helperRelay: true,

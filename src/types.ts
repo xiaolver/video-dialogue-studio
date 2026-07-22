@@ -1,9 +1,10 @@
 export interface Env {
   ASSETS: Fetcher;
+  AI: Ai;
   GENERATION_CONTEXTS: DurableObjectNamespace;
-  OPENAI_API_KEY?: string;
-  OPENAI_MODEL?: string;
-  OPENAI_TRANSCRIPTION_MODEL?: string;
+  MINIMAX_API_KEY?: string;
+  MINIMAX_MODEL?: string;
+  MINIMAX_BASE_URL?: string;
   WEBSHARE_PROXY_URL?: string;
   WEBSHARE_PROXY_URLS?: string;
 }

@@ -8,7 +8,7 @@
 - 可选填写一段自然语言要求，限定任务类型、输出风格、目标受众和约束条件，最多 1200 字。
 - 文章按章节展示，每章可单独生成 5W1H 总结。
 - 5W1H 请求只提交生成记录 ID 和章节序号，不会由前端重新提交整篇文章。
-- 优先读取公开字幕；没有字幕时，自动提取音频并交给 OpenAI 转写。
+- 优先读取公开字幕；没有字幕时，自动提取音频并交给 Cloudflare Whisper 转写。
 - 一台电脑启动共享字幕助手后，电脑和手机访问同一网站即可共用，不需要配对或额外配置。
 - 支持 Cloudflare Workers 一键部署。
 
@@ -31,7 +31,7 @@ npm install
 copy .dev.vars.example .dev.vars
 ```
 
-在 `.dev.vars` 中填写 `OPENAI_API_KEY`，然后运行：
+在 `.dev.vars` 中填写 `MINIMAX_API_KEY`，然后运行：
 
 ```bash
 npm run helper
@@ -79,17 +79,17 @@ Wrangler 默认地址为 <http://localhost:8787>。
 `.dev.vars` 示例：
 
 ```dotenv
-OPENAI_API_KEY=你的_OpenAI_API_Key
-OPENAI_MODEL=gpt-5.6-luna
-OPENAI_TRANSCRIPTION_MODEL=gpt-4o-mini-transcribe
+MINIMAX_API_KEY=你的_MiniMax_API_Key
+MINIMAX_MODEL=MiniMax-M2.7
+MINIMAX_BASE_URL=https://api.minimaxi.com/v1
 WEBSHARE_PROXY_URLS=http://用户名:密码@IP:端口,http://用户名:密码@IP:端口
 ```
 
 | 配置 | 必填 | 说明 |
 | --- | --- | --- |
-| `OPENAI_API_KEY` | 是 | 文章生成、5W1H 和无字幕音频转写 |
-| `OPENAI_MODEL` | 否 | 默认 `gpt-5.6-luna` |
-| `OPENAI_TRANSCRIPTION_MODEL` | 否 | 默认 `gpt-4o-mini-transcribe` |
+| `MINIMAX_API_KEY` | 是 | MiniMax 文章生成、5W1H，同时作为本机助手连接凭据 |
+| `MINIMAX_MODEL` | 否 | 默认 `MiniMax-M2.7` |
+| `MINIMAX_BASE_URL` | 否 | 中国区默认 `https://api.minimaxi.com/v1`；国际区密钥使用 `https://api.minimax.io/v1` |
 | `WEBSHARE_PROXY_URLS` | 否 | 云端直连 YouTube 失败后的代理池回退 |
 
 `.dev.vars` 已被 Git 忽略，不要把密钥或代理密码提交到仓库。
@@ -117,12 +117,12 @@ npm run deploy:one-click
 ```text
 浏览器 / 手机
     │
-    ├─ Cloudflare Worker ─ OpenAI GPT：生成文章
+    ├─ Cloudflare Worker ─ MiniMax：生成文章
     │        │
     │        ├─ Durable Object：保存生成上下文、生成 5W1H
     │        │
     │        └─ 共享字幕中继 ─ 本机助手 ─ yt-dlp：读取字幕
-    │                                      └─ ffmpeg + OpenAI：无字幕音频转写
+    │                                      └─ ffmpeg + Cloudflare Whisper：无字幕音频转写
     │
     └─ 助手离线时：Worker 直连 YouTube，再回退 Webshare 代理池
 ```
@@ -146,7 +146,7 @@ npm run deploy:one-click
 ├─ src/
 │  ├─ index.ts                Worker 路由、生成接口和共享助手接口
 │  ├─ context.ts              Durable Object 上下文及 WebSocket 中继
-│  ├─ openai.ts               OpenAI 请求和流式解析
+│  ├─ minimax.ts              MiniMax 流式生成和 Cloudflare Whisper 转写
 │  ├─ youtube.ts              YouTube 字幕获取
 │  ├─ proxy.ts                Webshare 代理池回退
 │  ├─ proxy-http.ts           Cloudflare TCP HTTP 代理客户端
@@ -189,6 +189,6 @@ node scripts/youtube-helper.mjs --probe-audio "YouTube 链接"
 如果页面显示“共享字幕助手未启动”，检查：
 
 1. `npm run helper` 的窗口是否仍在运行。
-2. `.dev.vars` 中的 `OPENAI_API_KEY` 是否与已部署到 Cloudflare 的密钥一致。
+2. `.dev.vars` 中的 `MINIMAX_API_KEY` 是否与已部署到 Cloudflare 的密钥一致。
 3. 终端是否出现“本机助手已连接 Cloudflare 字幕中继”。
 4. `https://dialogue.viagoing.com/api/health` 中的 `helperConnected` 是否为 `true`。

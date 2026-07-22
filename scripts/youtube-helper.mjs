@@ -159,7 +159,7 @@ function openBrowser(url) {
 }
 
 async function loadRelayProtocol() {
-  let apiKey = process.env.OPENAI_API_KEY?.trim();
+  let apiKey = process.env.MINIMAX_API_KEY?.trim();
   if (!apiKey) {
     try {
       const variables = await readFile(new URL("../.dev.vars", import.meta.url), "utf8");
@@ -167,7 +167,7 @@ async function loadRelayProtocol() {
         const line = rawLine.trim();
         if (!line || line.startsWith("#")) continue;
         const separator = line.indexOf("=");
-        if (separator < 1 || line.slice(0, separator).trim() !== "OPENAI_API_KEY") continue;
+        if (separator < 1 || line.slice(0, separator).trim() !== "MINIMAX_API_KEY") continue;
         apiKey = line.slice(separator + 1).trim().replace(/^(\"|')(.*)\1$/, "$2");
         break;
       }
@@ -175,7 +175,7 @@ async function loadRelayProtocol() {
       // Report the missing key below.
     }
   }
-  if (!apiKey) throw new Error(".dev.vars 中缺少 OPENAI_API_KEY，本机助手无法连接线上 Worker。");
+  if (!apiKey) throw new Error(".dev.vars 中缺少 MINIMAX_API_KEY，本机助手无法连接线上 Worker。");
   return `helper-${createHash("sha256").update(apiKey).digest("hex")}`;
 }
 
@@ -206,7 +206,7 @@ function connectCloudRelay({ protocol, browser, relayState }) {
         } catch (error) {
           if (error instanceof NoCaptionsError) {
             try {
-              process.stdout.write("视频没有公开字幕，正在下载并压缩音频交给 OpenAI 转写。\n");
+              process.stdout.write("视频没有公开字幕，正在下载并压缩音频交给 Cloudflare Whisper 转写。\n");
               const audio = await extractAudioForTranscription(error.videoUrl, error.metadata, { browser: error.browser || browser });
               socket.send(JSON.stringify({ type: "audio", requestId: payload.requestId, audio }));
               return;
