@@ -11,7 +11,6 @@ const LOCAL_APP_ORIGINS = new Set([
   "http://127.0.0.1:3210",
   "http://localhost:3210",
 ]);
-const HELPER_TOKEN_PATTERN = /^[a-f0-9]{64}$/;
 
 function json(data: unknown, status = 200): Response {
   return Response.json(data, { status, headers: { "Cache-Control": "no-store" } });
@@ -57,37 +56,41 @@ function contextStub(env: Env, generationId: string): DurableObjectStub {
   return env.GENERATION_CONTEXTS.get(env.GENERATION_CONTEXTS.idFromName(generationId));
 }
 
-function helperStub(env: Env, token: string): DurableObjectStub {
-  return env.GENERATION_CONTEXTS.get(env.GENERATION_CONTEXTS.idFromName(`helper:${token}`));
+function helperStub(env: Env): DurableObjectStub {
+  return env.GENERATION_CONTEXTS.get(env.GENERATION_CONTEXTS.idFromName("shared-youtube-helper"));
 }
 
-function validHelperToken(value: unknown): value is string {
-  return typeof value === "string" && HELPER_TOKEN_PATTERN.test(value);
+async function expectedHelperProtocol(env: Env): Promise<string | null> {
+  if (!env.GEMINI_API_KEY) return null;
+  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(env.GEMINI_API_KEY));
+  return `helper-${[...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, "0")).join("")}`;
 }
 
 async function handleHelperConnect(request: Request, env: Env): Promise<Response> {
-  const token = new URL(request.url).searchParams.get("token");
-  if (!validHelperToken(token)) return json({ error: "无效的本机助手配对令牌。" }, 400);
-  return helperStub(env, token).fetch("https://context/helper/connect", {
-    headers: { Upgrade: request.headers.get("Upgrade") || "" },
+  const expectedProtocol = await expectedHelperProtocol(env);
+  const requestProtocol = request.headers.get("Sec-WebSocket-Protocol");
+  if (!expectedProtocol || requestProtocol !== expectedProtocol) {
+    return json({ error: "本机助手身份验证失败。" }, 401);
+  }
+  return helperStub(env).fetch("https://context/helper/connect", {
+    headers: {
+      Upgrade: request.headers.get("Upgrade") || "",
+      "Sec-WebSocket-Protocol": requestProtocol,
+    },
   });
 }
 
-async function handleHelperStatus(request: Request, env: Env): Promise<Response> {
-  let body: { token?: unknown };
-  try { body = await readJson(request); } catch (error) { return json({ error: errorMessage(error) }, 400); }
-  if (!validHelperToken(body.token)) return json({ error: "无效的本机助手配对令牌。" }, 400);
-  return helperStub(env, body.token).fetch("https://context/helper/status");
+async function handleHelperStatus(env: Env): Promise<Response> {
+  return helperStub(env).fetch("https://context/helper/status");
 }
 
 async function handleHelperExtract(request: Request, env: Env): Promise<Response> {
-  let body: { token?: unknown; videoUrl?: unknown };
+  let body: { videoUrl?: unknown };
   try { body = await readJson(request); } catch (error) { return json({ error: errorMessage(error) }, 400); }
-  if (!validHelperToken(body.token)) return json({ error: "无效的本机助手配对令牌。" }, 400);
   if (typeof body.videoUrl !== "string" || !parseYouTubeVideoId(body.videoUrl)) {
     return json({ error: "请输入有效的 YouTube 视频链接。" }, 400);
   }
-  return helperStub(env, body.token).fetch("https://context/helper/extract", {
+  return helperStub(env).fetch("https://context/helper/extract", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ videoUrl: body.videoUrl }),
@@ -220,8 +223,8 @@ export default {
     const url = new URL(request.url);
     if (request.method === "OPTIONS" && url.pathname.startsWith("/api/")) return apiPreflight(request);
     if (request.method === "GET" && url.pathname === "/api/helper/connect") return handleHelperConnect(request, env);
-    if (request.method === "POST" && url.pathname === "/api/helper/status") {
-      return withApiCors(request, await handleHelperStatus(request, env));
+    if (["GET", "POST"].includes(request.method) && url.pathname === "/api/helper/status") {
+      return withApiCors(request, await handleHelperStatus(env));
     }
     if (request.method === "POST" && url.pathname === "/api/helper/extract") {
       return withApiCors(request, await handleHelperExtract(request, env));
@@ -234,12 +237,16 @@ export default {
     }
     if (request.method === "GET" && url.pathname === "/api/health") {
       const proxySetting = env.WEBSHARE_PROXY_URLS || env.WEBSHARE_PROXY_URL;
+      const helperStatus: { connected?: boolean } = await handleHelperStatus(env)
+        .then((response) => response.json<{ connected?: boolean }>())
+        .catch(() => ({}));
       return withApiCors(request, json({
         ok: true,
         mode: env.GEMINI_API_KEY ? "gemini" : "demo",
         youtubeProxy: Boolean(proxySetting),
         youtubeProxyCount: proxySetting?.split(/[\r\n,;]+/).filter((value) => value.trim()).length ?? 0,
         helperRelay: true,
+        helperConnected: Boolean(helperStatus.connected),
       }));
     }
     if (url.pathname.startsWith("/api/")) return withApiCors(request, json({ error: "Not found" }, 404));

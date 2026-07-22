@@ -1,6 +1,6 @@
 import http from "node:http";
 import { spawn } from "node:child_process";
-import { randomBytes } from "node:crypto";
+import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { pathToFileURL } from "node:url";
 import { extractAudioForTranscription, extractTranscript, NoCaptionsError } from "./youtube-helper-lib.mjs";
@@ -127,7 +127,6 @@ export function createHelperServer({ browser, relayState } = {}) {
         service: "youtube-local-helper",
         browserCookies: browser || null,
         relayConnected: relayState?.connected ?? false,
-        relayToken: relayState?.token ?? null,
       }, origin);
       return;
     }
@@ -159,17 +158,38 @@ function openBrowser(url) {
   }
 }
 
-function connectCloudRelay({ token, browser, relayState }) {
+async function loadRelayProtocol() {
+  let apiKey = process.env.GEMINI_API_KEY?.trim();
+  if (!apiKey) {
+    try {
+      const variables = await readFile(new URL("../.dev.vars", import.meta.url), "utf8");
+      for (const rawLine of variables.split(/\r?\n/)) {
+        const line = rawLine.trim();
+        if (!line || line.startsWith("#")) continue;
+        const separator = line.indexOf("=");
+        if (separator < 1 || line.slice(0, separator).trim() !== "GEMINI_API_KEY") continue;
+        apiKey = line.slice(separator + 1).trim().replace(/^(\"|')(.*)\1$/, "$2");
+        break;
+      }
+    } catch {
+      // Report the missing key below.
+    }
+  }
+  if (!apiKey) throw new Error(".dev.vars 中缺少 GEMINI_API_KEY，本机助手无法连接线上 Worker。");
+  return `helper-${createHash("sha256").update(apiKey).digest("hex")}`;
+}
+
+function connectCloudRelay({ protocol, browser, relayState }) {
   let retryDelay = 1_000;
   let extractionQueue = Promise.resolve();
-  const endpoint = `wss://dialogue.viagoing.com/api/helper/connect?token=${encodeURIComponent(token)}`;
+  const endpoint = "wss://dialogue.viagoing.com/api/helper/connect";
 
   const connect = () => {
     if (typeof WebSocket === "undefined") {
       process.stderr.write("当前 Node.js 不支持 WebSocket，请升级到 Node.js 22+。\n");
       return;
     }
-    const socket = new WebSocket(endpoint);
+    const socket = new WebSocket(endpoint, protocol);
     socket.addEventListener("open", () => {
       relayState.connected = true;
       retryDelay = 1_000;
@@ -243,17 +263,17 @@ async function main() {
       return;
     }
   }
-  const relayState = { token: randomBytes(32).toString("hex"), connected: false };
-  const pairingUrl = `https://dialogue.viagoing.com/#helper=${relayState.token}`;
+  const relayState = { connected: false };
+  const relayProtocol = await loadRelayProtocol();
+  const publicUrl = "https://dialogue.viagoing.com/";
   const server = createHelperServer({ ...options, relayState });
   server.listen(PORT, HOST, () => {
     process.stdout.write(`\nYouTube 本机字幕助手已启动：http://${HOST}:${PORT}\n`);
-    process.stdout.write("请保持此窗口开启；线上页面会通过 Cloudflare 中继调用本机字幕。\n");
-    process.stdout.write(`配对地址：${pairingUrl}\n`);
+    process.stdout.write("请保持此窗口开启；所有网页和手机访问都会共用这个字幕助手。\n");
     if (options.browser) process.stdout.write(`已启用本机 ${options.browser} Cookie（Cookie 不会上传到云端）。\n`);
     else process.stdout.write("当前使用本机网络和公开字幕，不读取浏览器 Cookie。\n");
-    connectCloudRelay({ token: relayState.token, browser: options.browser, relayState });
-    if (options.open) openBrowser(pairingUrl);
+    connectCloudRelay({ protocol: relayProtocol, browser: options.browser, relayState });
+    if (options.open) openBrowser(publicUrl);
   });
 }
 

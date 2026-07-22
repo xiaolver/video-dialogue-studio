@@ -56,7 +56,12 @@ export class GenerationContext extends DurableObject<Env> {
       const [client, server] = Object.values(pair);
       this.ctx.acceptWebSocket(server, ["helper"]);
       server.serializeAttachment({ role: "helper", connectedAt: Date.now() });
-      return new Response(null, { status: 101, webSocket: client });
+      const protocol = request.headers.get("Sec-WebSocket-Protocol");
+      return new Response(null, {
+        status: 101,
+        webSocket: client,
+        headers: protocol ? { "Sec-WebSocket-Protocol": protocol } : undefined,
+      });
     }
 
     if (request.method === "GET" && url.pathname === "/helper/status") {
