@@ -154,6 +154,7 @@ async function handleGenerate(request: Request, env: Env, execution: ExecutionCo
       generationId,
       videoTitle: transcript.title,
       transcriptSource: transcript.source,
+      transcriptLanguage: transcript.language,
       provider: env.GEMINI_API_KEY ? "gemini" : "demo",
     });
     try {

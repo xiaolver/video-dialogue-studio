@@ -53,6 +53,12 @@ npm run helper:edge
 
 这会让 `yt-dlp` 在本机读取对应浏览器 Cookie，但 Cookie 始终留在本机，接口响应中只有字幕。建议使用普通公开字幕模式；不要把 Cookie 文件、账号密码或浏览器配置上传到 Worker/Git。助手健康检查地址是 `http://127.0.0.1:3210/health`。
 
+本机还需安装 `ffmpeg`，用于没有公开字幕时把音频压缩为单声道 16kHz MP3。Windows 可运行：
+
+```powershell
+winget install Gyan.FFmpeg
+```
+
 ## 一键部署与后续更新
 
 项目默认发布到 `https://dialogue.viagoing.com`。首次部署前需要完成三项一次性准备：
@@ -113,6 +119,8 @@ npm run deploy:one-click
 本机助手启动时生成 256 位随机令牌，并主动连接 `wss://dialogue.viagoing.com/api/helper/connect`。线上页面从 URL fragment 接收令牌后立即移除地址栏片段并保存在浏览器本地；fragment 不会随页面请求发送到服务器。页面提交字幕任务时，Worker 用令牌定位对应 Durable Object，再通过可休眠 WebSocket 把任务推送给本机助手。因为连接方向是“本机 → Cloudflare”，家庭路由器、防火墙和浏览器本地网络策略都不会阻止它。
 
 助手收到任务后由本机 `yt-dlp` 获取元数据，优先选择人工中文字幕，其次为人工英文、自动中文、自动英文和其他公开字幕，并优先解析 JSON3、回退 VTT。回传内容只有视频 ID、标题、语言和最多 40000 字的字幕；浏览器 Cookie、账号密码不会进入 WebSocket。Worker 会再次校验视频 ID、字幕来源和文本长度，拒绝与当前视频不匹配的上下文。
+
+若视频完全没有人工字幕和自动字幕，助手会下载最佳音频并用本机 `ffmpeg` 压缩为 24kbps、16kHz 单声道 MP3，再通过已配对 WebSocket 发送给 Worker。Worker 使用已有的 `GEMINI_API_KEY` 调用 Gemini 音频理解完成带时间戳转写，随后把转写文本交给原有文章生成链路。音频压缩后限制为 12 MiB，内联请求连同 Base64 和提示词保持在 Gemini 的 20 MB 请求上限以内；临时音频转写完成后立即删除。
 
 服务端校验并提取 11 位视频 ID，请求 YouTube watch 页面中的 `ytInitialPlayerResponse`，优先选择人工中文字幕，其次是英文字幕与自动字幕。字幕轨道以 JSON3 格式读取，合并片段并保留 `[mm:ss]` 时间戳。输入、字幕长度都有限制，避免异常请求拖垮 Worker。
 

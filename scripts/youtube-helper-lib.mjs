@@ -6,6 +6,16 @@ import { promisify } from "node:util";
 
 const execFileAsync = promisify(execFile);
 const MAX_TRANSCRIPT_LENGTH = 40_000;
+const MAX_AUDIO_BYTES = 12 * 1024 * 1024;
+
+export class NoCaptionsError extends Error {
+  constructor(message, metadata, videoUrl) {
+    super(message);
+    this.name = "NoCaptionsError";
+    this.metadata = metadata;
+    this.videoUrl = videoUrl;
+  }
+}
 
 export function parseYouTubeVideoId(input) {
   const value = String(input ?? "").trim();
@@ -201,7 +211,9 @@ export async function extractTranscript(videoUrl, options = {}) {
   const normalizedUrl = `https://www.youtube.com/watch?v=${videoId}`;
   const metadata = await runYtDlp(normalizedUrl, options);
   const caption = pickCaption(metadata);
-  if (!caption) throw new Error("该视频没有可用的公开字幕（当前支持 JSON3/VTT 字幕轨道）。");
+  if (!caption) {
+    throw new NoCaptionsError("该视频没有公开字幕，正在改用音频转写。", metadata, normalizedUrl);
+  }
   const raw = await downloadCaption(normalizedUrl, caption, options);
   let text;
   if (String(caption.format.ext).toLowerCase() === "json3") {
@@ -221,4 +233,70 @@ export async function extractTranscript(videoUrl, options = {}) {
     text: text.slice(0, MAX_TRANSCRIPT_LENGTH),
     source: "local-helper",
   };
+}
+
+export async function extractAudioForTranscription(videoUrl, metadata, options = {}) {
+  const videoId = parseYouTubeVideoId(videoUrl);
+  if (!videoId) throw new Error("请输入有效的 YouTube 视频链接。");
+  const directory = await mkdtemp(path.join(os.tmpdir(), "youtube-audio-"));
+  const binary = options.binary || process.env.YT_DLP_BIN || "yt-dlp";
+  const ffmpegBinary = process.env.FFMPEG_BIN || "ffmpeg";
+  const args = [
+    "--format", "bestaudio/best",
+    "--no-playlist",
+    "--no-warnings",
+    "--socket-timeout", "20",
+    "--paths", directory,
+    "--output", "source.%(ext)s",
+  ];
+  if (options.browser) args.push("--cookies-from-browser", options.browser);
+  args.push(videoUrl);
+
+  try {
+    try {
+      await execFileAsync(binary, args, {
+        encoding: "utf8",
+        timeout: 180_000,
+        maxBuffer: 4 * 1024 * 1024,
+        windowsHide: true,
+      });
+    } catch (error) {
+      throw new Error(friendlyYtDlpError(error));
+    }
+
+    const files = await readdir(directory);
+    const sourceName = files.find((file) => file.startsWith("source.") && !file.endsWith(".part"));
+    if (!sourceName) throw new Error("yt-dlp 没有生成音频文件。");
+    const sourcePath = path.join(directory, sourceName);
+    const outputPath = path.join(directory, "transcription.mp3");
+    try {
+      await execFileAsync(ffmpegBinary, [
+        "-hide_banner", "-loglevel", "error", "-y",
+        "-i", sourcePath,
+        "-vn", "-ac", "1", "-ar", "16000", "-b:a", "24k",
+        outputPath,
+      ], {
+        encoding: "utf8",
+        timeout: 180_000,
+        maxBuffer: 4 * 1024 * 1024,
+        windowsHide: true,
+      });
+    } catch (error) {
+      if (error?.code === "ENOENT") throw new Error("未找到 ffmpeg，请先安装 ffmpeg。 ");
+      throw new Error(`音频压缩失败：${String(error?.stderr || error?.message || error).slice(0, 500)}`);
+    }
+    const audio = await readFile(outputPath);
+    if (!audio.length || audio.length > MAX_AUDIO_BYTES) {
+      throw new Error(`压缩后的音频为空或超过 ${MAX_AUDIO_BYTES / 1024 / 1024} MiB 限制。`);
+    }
+    return {
+      videoId,
+      title: String(metadata?.title || `YouTube 视频 ${videoId}`).slice(0, 300),
+      duration: Number(metadata?.duration || 0),
+      mimeType: "audio/mpeg",
+      data: audio.toString("base64"),
+    };
+  } finally {
+    await rm(directory, { recursive: true, force: true }).catch(() => {});
+  }
 }

@@ -1,5 +1,6 @@
 import { DurableObject } from "cloudflare:workers";
-import { summarizeSection } from "./gemini";
+import { summarizeSection, transcribeAudio } from "./gemini";
+import type { RelayAudioInput } from "./gemini";
 import type { Env, FiveWOneH, StoredGeneration } from "./types";
 
 const GENERATION_KEY = "generation";
@@ -7,9 +8,20 @@ const TRANSCRIPT_KEY = "transcript";
 const ARTICLE_KEY = "article";
 const SECTIONS_KEY = "sections";
 const CONTEXT_TTL_MS = 24 * 60 * 60 * 1_000;
+const MAX_AUDIO_BASE64_LENGTH = 16 * 1024 * 1024;
 
 type GenerationMetadata = Omit<StoredGeneration, "transcript" | "article" | "sections">;
 type RelayResult = { transcript?: unknown; error?: string };
+
+function validRelayAudio(value: unknown): value is RelayAudioInput {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  const audio = value as Partial<RelayAudioInput>;
+  return typeof audio.videoId === "string" && /^[\w-]{11}$/.test(audio.videoId)
+    && typeof audio.title === "string" && audio.title.length <= 300
+    && typeof audio.duration === "number" && Number.isFinite(audio.duration) && audio.duration >= 0 && audio.duration <= 34_200
+    && audio.mimeType === "audio/mpeg"
+    && typeof audio.data === "string" && audio.data.length > 0 && audio.data.length <= MAX_AUDIO_BASE64_LENGTH;
+}
 
 function json(data: unknown, status = 200): Response {
   return Response.json(data, { status, headers: { "Cache-Control": "no-store" } });
@@ -61,7 +73,7 @@ export class GenerationContext extends DurableObject<Env> {
         const timeout = setTimeout(() => {
           this.pendingRelayRequests.delete(requestId);
           resolve({ error: "本机助手提取字幕超时。" });
-        }, 120_000);
+        }, 5 * 60_000);
         this.pendingRelayRequests.set(requestId, (value) => {
           clearTimeout(timeout);
           this.pendingRelayRequests.delete(requestId);
@@ -131,9 +143,44 @@ export class GenerationContext extends DurableObject<Env> {
   async webSocketMessage(_socket: WebSocket, message: string | ArrayBuffer): Promise<void> {
     try {
       const text = typeof message === "string" ? message : new TextDecoder().decode(message);
-      const payload = JSON.parse(text) as { type?: string; requestId?: string; transcript?: unknown; error?: string };
-      if (payload.type !== "result" || !payload.requestId) return;
-      this.pendingRelayRequests.get(payload.requestId)?.({ transcript: payload.transcript, error: payload.error });
+      const payload = JSON.parse(text) as {
+        type?: string;
+        requestId?: string;
+        transcript?: unknown;
+        audio?: unknown;
+        error?: string;
+      };
+      if (!payload.requestId) return;
+      const resolve = this.pendingRelayRequests.get(payload.requestId);
+      if (!resolve) return;
+      if (payload.type === "result") {
+        resolve({ transcript: payload.transcript, error: payload.error });
+        return;
+      }
+      if (payload.type === "audio") {
+        if (!validRelayAudio(payload.audio)) {
+          resolve({ error: "本机助手返回的音频数据无效或过大。" });
+          return;
+        }
+        try {
+          const transcriptText = await transcribeAudio(
+            payload.audio,
+            this.env.GEMINI_API_KEY,
+            this.env.GEMINI_MODEL,
+          );
+          resolve({
+            transcript: {
+              videoId: payload.audio.videoId,
+              title: payload.audio.title,
+              language: "audio-transcription",
+              text: transcriptText,
+              source: "local-helper",
+            },
+          });
+        } catch (error) {
+          resolve({ error: error instanceof Error ? error.message : "Gemini 音频转写失败。" });
+        }
+      }
     } catch {
       // Ignore malformed helper messages; the pending request will time out.
     }

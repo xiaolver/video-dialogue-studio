@@ -94,7 +94,7 @@ async function detectHelper() {
 async function getLocalTranscript(videoUrl) {
   if (state.helperToken) {
     const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 125_000);
+    const timeout = setTimeout(() => controller.abort(), 6 * 60_000);
     try {
       const response = await fetch(apiUrl("/api/helper/extract"), {
         method: "POST",
@@ -236,11 +236,12 @@ async function generate(event) {
     let localTranscript;
     let localError = "";
     if (state.helperAvailable || await detectHelper()) {
-      setProgress("本机正在提取字幕", "通过你的家庭网络运行 yt-dlp，不上传登录凭据", 16);
+      setProgress("本机正在提取字幕", "没有公开字幕时会自动下载音频并由 Gemini 转写", 16);
       try {
         localTranscript = await getLocalTranscript(videoInput.value);
-        setHelperStatus("ready", "本机字幕已提取，只向云端提交字幕文本");
-        setProgress("本机字幕已就绪", "正在安全提交字幕文本并生成文章", 28);
+        const audioTranscribed = localTranscript.language === "audio-transcription";
+        setHelperStatus("ready", audioTranscribed ? "无字幕视频已完成 Gemini 音频转写" : "本机字幕已提取，只向云端提交字幕文本");
+        setProgress(audioTranscribed ? "音频转写已就绪" : "本机字幕已就绪", "正在安全提交文本并生成文章", 28);
       } catch (error) {
         localError = error instanceof Error ? error.message : "本机字幕提取失败。";
         setHelperStatus("error", `本机提取失败：${localError}`);
@@ -281,7 +282,9 @@ async function generate(event) {
         if (event.type === "meta") {
           state.generationId = event.generationId;
           videoTitle.textContent = event.videoTitle;
-          sourceBadge.textContent = event.transcriptSource === "demo"
+          sourceBadge.textContent = event.transcriptLanguage === "audio-transcription"
+            ? "本机音频转写"
+            : event.transcriptSource === "demo"
             ? "内置字幕"
             : event.transcriptSource === "youtube-proxy"
               ? "Webshare 代理字幕"

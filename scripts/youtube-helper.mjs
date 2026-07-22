@@ -3,7 +3,7 @@ import { spawn } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { pathToFileURL } from "node:url";
-import { extractTranscript } from "./youtube-helper-lib.mjs";
+import { extractAudioForTranscription, extractTranscript, NoCaptionsError } from "./youtube-helper-lib.mjs";
 
 const HOST = "127.0.0.1";
 const PORT = Number(process.env.YOUTUBE_HELPER_PORT || 3210);
@@ -27,12 +27,14 @@ const DEFAULT_ORIGINS = [
 function argumentsFrom(argv) {
   const browserIndex = argv.indexOf("--browser");
   const probeIndex = argv.indexOf("--probe");
+  const probeAudioIndex = argv.indexOf("--probe-audio");
   const browser = browserIndex >= 0 ? argv[browserIndex + 1] : undefined;
   const probe = probeIndex >= 0 ? argv[probeIndex + 1] : undefined;
+  const probeAudio = probeAudioIndex >= 0 ? argv[probeAudioIndex + 1] : undefined;
   if (browser && !["chrome", "edge", "firefox"].includes(browser)) {
     throw new Error("--browser 仅支持 chrome、edge 或 firefox。");
   }
-  return { browser, probe, open: !argv.includes("--no-open") };
+  return { browser, probe, probeAudio, open: !argv.includes("--no-open") };
 }
 
 function allowedOrigins() {
@@ -182,6 +184,21 @@ function connectCloudRelay({ token, browser, relayState }) {
           const transcript = await extractTranscript(payload.videoUrl, { browser });
           socket.send(JSON.stringify({ type: "result", requestId: payload.requestId, transcript }));
         } catch (error) {
+          if (error instanceof NoCaptionsError) {
+            try {
+              process.stdout.write("视频没有公开字幕，正在下载并压缩音频交给 Gemini 转写。\n");
+              const audio = await extractAudioForTranscription(error.videoUrl, error.metadata, { browser });
+              socket.send(JSON.stringify({ type: "audio", requestId: payload.requestId, audio }));
+              return;
+            } catch (audioError) {
+              socket.send(JSON.stringify({
+                type: "result",
+                requestId: payload.requestId,
+                error: audioError instanceof Error ? audioError.message : "音频转写准备失败。",
+              }));
+              return;
+            }
+          }
           socket.send(JSON.stringify({
             type: "result",
             requestId: payload.requestId,
@@ -208,6 +225,23 @@ async function main() {
     const transcript = await extractTranscript(options.probe, { browser: options.browser });
     process.stdout.write(`${JSON.stringify({ ...transcript, text: `${transcript.text.slice(0, 180)}…` }, null, 2)}\n`);
     return;
+  }
+  if (options.probeAudio) {
+    try {
+      await extractTranscript(options.probeAudio, { browser: options.browser });
+      throw new Error("该视频存在公开字幕，不需要音频兜底。");
+    } catch (error) {
+      if (!(error instanceof NoCaptionsError)) throw error;
+      const audio = await extractAudioForTranscription(error.videoUrl, error.metadata, { browser: options.browser });
+      process.stdout.write(`${JSON.stringify({
+        videoId: audio.videoId,
+        title: audio.title,
+        duration: audio.duration,
+        mimeType: audio.mimeType,
+        audioBytes: Buffer.byteLength(audio.data, "base64"),
+      }, null, 2)}\n`);
+      return;
+    }
   }
   const relayState = { token: randomBytes(32).toString("hex"), connected: false };
   const pairingUrl = `https://dialogue.viagoing.com/#helper=${relayState.token}`;
