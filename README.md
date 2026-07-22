@@ -12,6 +12,8 @@
 
 Worker 将视频标题、字幕语言、字幕正文和生成要求组成提示词，请求 MiniMax OpenAI 兼容的 Chat Completions API，并使用 `stream: true` 接收 SSE。服务端只读取 `choices[0].delta.content`，忽略独立返回的推理内容，再转换成 `meta`、`delta`、`done`、`error` 四类 NDJSON 事件，通过 `ReadableStream` 立即返回浏览器。
 
+主文章使用 MiniMax M3 非思考模式，避免长时间停留在内部推理阶段。浏览器收到第一个 `delta` 后立即绘制正文，后续片段按动画帧持续更新；该模式只用于低延迟生成，不改变字幕处理流程。
+
 前端使用 `response.body.getReader()` 持续读取增量内容，配合 `TextDecoder` 拼接文本并实时渲染 Markdown，因此用户不必等待整篇文章生成完毕就能看到输出。
 
 ## 3. 如何根据用户生成要求影响输出结果

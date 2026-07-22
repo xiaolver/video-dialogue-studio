@@ -32,6 +32,7 @@ const state = {
   summaries: new Map(),
   loadingSummaries: new Set(),
   renderQueued: false,
+  hasVisibleOutput: false,
   helperAvailable: false,
   progressStartedAt: 0,
   progressTimer: null,
@@ -224,6 +225,7 @@ function resetResult() {
   state.markdown = "";
   state.generationId = "";
   state.complete = false;
+  state.hasVisibleOutput = false;
   state.summaries.clear();
   state.loadingSummaries.clear();
   articleElement.innerHTML = "";
@@ -303,7 +305,13 @@ async function generate(event) {
           setProgress("正在流式撰写", event.provider === "minimax" ? `${event.model || "MiniMax-M3"} 正在组织章节与对话` : "演示模式 · 配置 API Key 后使用 MiniMax", 62);
         } else if (event.type === "delta") {
           state.markdown += event.text;
-          queueRender();
+          if (!state.hasVisibleOutput) {
+            state.hasVisibleOutput = true;
+            articleElement.innerHTML = renderMarkdown(state.markdown);
+            setProgress("正文正在实时输出", `${event.model || "MiniMax-M3"} 已开始逐段返回内容`, 66);
+          } else {
+            queueRender();
+          }
         } else if (event.type === "done") {
           state.complete = true;
           queueRender();

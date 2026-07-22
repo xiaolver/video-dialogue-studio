@@ -105,6 +105,7 @@ function chatBody(model: string, prompt: string, stream: boolean, maximumTokens:
     ],
     stream,
     reasoning_split: true,
+    ...(model === "MiniMax-M3" ? { thinking: { type: "disabled" } } : {}),
     max_completion_tokens: maximumTokens,
     temperature: 0.4,
     top_p: 0.9,

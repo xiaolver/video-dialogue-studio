@@ -26,16 +26,17 @@ describe("MiniMax provider", () => {
     }));
 
     let output = "";
-    for await (const delta of streamArticle(transcript, "面向初学者", "mini-test", "MiniMax-test")) output += delta;
+    for await (const delta of streamArticle(transcript, "面向初学者", "mini-test", "MiniMax-M3")) output += delta;
     expect(output).toBe("你好，世界");
     expect(request).toHaveBeenCalledOnce();
     expect(request.mock.calls[0][0]).toBe("https://api.minimaxi.com/v1/chat/completions");
     const [, init] = request.mock.calls[0];
     expect(new Headers(init?.headers).get("authorization")).toBe("Bearer mini-test");
     expect(JSON.parse(String(init?.body))).toMatchObject({
-      model: "MiniMax-test",
+      model: "MiniMax-M3",
       stream: true,
       reasoning_split: true,
+      thinking: { type: "disabled" },
     });
   });
 
