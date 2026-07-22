@@ -4,6 +4,7 @@ export interface Env {
   GEMINI_API_KEY?: string;
   GEMINI_MODEL?: string;
   WEBSHARE_PROXY_URL?: string;
+  WEBSHARE_PROXY_URLS?: string;
 }
 
 export interface TranscriptResult {

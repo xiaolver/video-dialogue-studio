@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { decodeChunkedBody, isAllowedYouTubeHost, parseProxyUrl, parseRawHttpResponse } from "../src/proxy-http";
+import { decodeChunkedBody, isAllowedYouTubeHost, parseProxyPool, parseProxyUrl, parseRawHttpResponse } from "../src/proxy-http";
 
 const encoder = new TextEncoder();
 const decoder = new TextDecoder();
@@ -22,6 +22,15 @@ describe("parseProxyUrl", () => {
   it("rejects ports blocked or reserved by Cloudflare TCP sockets", () => {
     expect(() => parseProxyUrl("1.2.3.4:80:demo-user:secret")).toThrow(/非 25\/80\/443/);
     expect(() => parseProxyUrl("http://demo-user:secret@1.2.3.4:443")).toThrow(/非 25\/80\/443/);
+  });
+});
+
+describe("parseProxyPool", () => {
+  it("accepts comma and newline separated proxies and removes duplicates", () => {
+    expect(parseProxyPool("one:1000:u:p,two:2000:u:p\none:1000:u:p")).toEqual([
+      "one:1000:u:p",
+      "two:2000:u:p",
+    ]);
   });
 });
 

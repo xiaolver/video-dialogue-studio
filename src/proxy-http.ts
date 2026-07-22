@@ -14,6 +14,16 @@ export interface ParsedHttpResponse {
 
 const textDecoder = new TextDecoder();
 
+export function parseProxyPool(input: string): string[] {
+  const proxies = input
+    .split(/[\r\n,;]+/)
+    .map((value) => value.trim())
+    .filter(Boolean);
+  const unique = [...new Set(proxies)];
+  if (!unique.length) throw new Error("Webshare 代理池为空。");
+  return unique;
+}
+
 function validateProxyPort(port: number): number {
   if (!Number.isInteger(port) || port < 1 || port > 65_535) throw new Error("代理端口无效。");
   if ([25, 80, 443].includes(port)) {

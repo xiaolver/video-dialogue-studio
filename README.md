@@ -20,7 +20,7 @@ npm run dev
 项目默认发布到 `https://dialogue.viagoing.com`。首次部署前需要完成三项一次性准备：
 
 1. 安装依赖：`npm install`。
-2. 将 `.dev.vars.example` 复制为 `.dev.vars`，填入 `GEMINI_API_KEY`。如需处理 YouTube 验证码，再填入 Webshare 的 `WEBSHARE_PROXY_URL`。`.dev.vars` 已被 Git 忽略。
+2. 将 `.dev.vars.example` 复制为 `.dev.vars`，填入 `GEMINI_API_KEY`。如需处理 YouTube 验证码，再填入 Webshare 的 `WEBSHARE_PROXY_URLS`。`.dev.vars` 已被 Git 忽略。
 3. 运行 `npx wrangler login` 登录 Cloudflare。新账户还需打开 [Workers & Pages](https://dash.cloudflare.com/?to=/:account/workers-and-pages)，按页面提示注册一次 `workers.dev` 子域名；这是 Cloudflare 创建 Worker 的账户级前置条件，即使最终只使用自定义域名也需要完成一次。
 
 以后首次发布或修改代码后，都只需要运行：
@@ -33,7 +33,7 @@ npm run deploy:one-click
 
 - 检查 Cloudflare 登录状态，未登录时启动 OAuth；
 - 上传 Worker、静态资源和 Durable Object 迁移；
-- 从本地 `.dev.vars` 安全读取 Key，更新线上 `GEMINI_API_KEY`；若已配置代理，同时更新 `WEBSHARE_PROXY_URL` Secret；
+- 从本地 `.dev.vars` 安全读取 Key，更新线上 `GEMINI_API_KEY`；若已配置代理池，同时更新 `WEBSHARE_PROXY_URLS` Secret；
 - 请求 `https://dialogue.viagoing.com/api/health`，确认公开地址、Gemini 模式和代理配置都已生效。
 - 对 Cloudflare API 的偶发连接超时自动重试；只有明确返回未登录时才重新启动 OAuth。
 
@@ -52,7 +52,7 @@ npm run deploy:one-click
 ├─ src/
 │  ├─ index.ts             # Worker 入口、API 路由与流式响应
 │  ├─ youtube.ts           # 视频 ID、YouTube 字幕和示例回退
-│  ├─ proxy.ts             # TCP Socket、HTTP CONNECT 与隧道内 TLS 请求
+│  ├─ proxy.ts             # TCP Socket 与 Webshare 绝对 URL 代理请求
 │  ├─ proxy-http.ts        # Webshare 配置和原始 HTTP 响应解析
 │  ├─ gemini.ts            # Gemini 流式文章与结构化总结
 │  ├─ context.ts           # Durable Object 上下文、缓存与定时清理
@@ -71,21 +71,21 @@ npm run deploy:one-click
 
 服务端校验并提取 11 位视频 ID，请求 YouTube watch 页面中的 `ytInitialPlayerResponse`，优先选择人工中文字幕，其次是英文字幕与自动字幕。字幕轨道以 JSON3 格式读取，合并片段并保留 `[mm:ss]` 时间戳。输入、字幕长度都有限制，避免异常请求拖垮 Worker。
 
-YouTube 可能对数据中心 IP 返回验证码。现在的处理顺序是：先用 Worker 原生 `fetch` 直连；遇到验证码、字幕轨道缺失或请求失败时，若配置了 Webshare，则自动通过 Cloudflare Worker TCP Socket 重试；代理仍失败才返回明确错误。对题目指定的 `xRh2sVcNXQ8` 仍保留演示字幕作为最后回退，不会悄悄为其他视频生成无来源内容。
+YouTube 可能对数据中心 IP 返回验证码。现在的处理顺序是：先用 Worker 原生 `fetch` 直连；遇到验证码、字幕轨道缺失或请求失败时，若配置了 Webshare，则从代理池随机起点开始，通过 Cloudflare Worker TCP Socket 依次重试最多 5 个节点。代理取得 watch 页面后，会先按人工/自动字幕类型生成 Android Innertube `get_transcript` 参数，尝试读取文字稿面板数据；失败后再依次尝试 Worker 直连和当前代理的 `timedtext` 字幕轨道。代理池仍失败才返回包含 HTTP 状态的明确错误。对题目指定的 `xRh2sVcNXQ8` 仍保留演示字幕作为最后回退，不会悄悄为其他视频生成无来源内容。
 
-代理使用 HTTP CONNECT，而不是把普通 `fetch` 指向代理：Worker 先用 `connect()` 建立到 Webshare 节点的 TCP 连接，发送带 Basic 认证的 `CONNECT youtube-host:443`，收到 200 后通过 `startTls({ expectedServerHostname })` 在隧道内完成 YouTube TLS，再发送原始 HTTP/1.1 请求。重定向目标只允许 YouTube、YouTube NoCookie 和 GoogleVideo 域名，响应大小限制为 8 MiB，因此这不是一个可被外部滥用的开放代理。
+代理不依赖 Worker `fetch`：Worker 用 `connect()` 建立到 Webshare 节点的 TCP 连接，携带 Basic 认证发送绝对 HTTPS URL 的原始 HTTP/1.1 请求，由 Webshare 代理端完成目标站 TLS。之所以不在 CONNECT 隧道后调用 `startTls()`，是因为 Cloudflare 当前运行时尚不能可靠地为这类隧道改写目标 SNI，实际会触发 `TLS Handshake Failed`。重定向目标只允许 YouTube、YouTube NoCookie 和 GoogleVideo 域名，响应大小限制为 8 MiB，因此这不是一个可被外部滥用的开放代理。
 
-在 `.dev.vars` 中任选一种 Webshare HTTP 代理格式：
+在 `.dev.vars` 中配置一条或多条 Webshare HTTP 代理，多条以英文逗号分隔：
 
 ```dotenv
-# 标准 URL 格式（推荐）
-WEBSHARE_PROXY_URL="http://username:password@proxy-host:proxy-port"
+# Webshare 下载列表格式；可继续追加更多节点
+WEBSHARE_PROXY_URLS="proxy-host:proxy-port:username:password,proxy-host-2:proxy-port:username:password"
 
-# 或 Webshare 下载列表常见格式
-# WEBSHARE_PROXY_URL="proxy-host:proxy-port:username:password"
+# 兼容旧版单代理标准 URL
+# WEBSHARE_PROXY_URL="http://username:password@proxy-host:proxy-port"
 ```
 
-建议选择 Webshare 的用户名/密码认证 HTTP 代理，不要使用 IP 白名单认证，因为 Worker 出口 IP 不固定。代理端口必须避开 `25`、`80` 和 `443`；例如 Webshare 轮换端点常用的 `75`，或代理列表分配的其他高位端口。代理密码只保存在本地 `.dev.vars` 和 Cloudflare Worker Secret 中。配置后运行 `npm run deploy:one-click`，健康检查返回的 `youtubeProxy` 应为 `true`。
+建议选择 Webshare 的用户名/密码认证 HTTP 代理，不要使用 IP 白名单认证，因为 Worker 出口 IP 不固定。代理端口必须避开 `25`、`80` 和 `443`；例如 Webshare 轮换端点常用的 `75`，或代理列表分配的其他高位端口。免费数据中心代理是共享 IP，可能全部被 YouTube 字幕接口返回 429；需要稳定运行时应使用未被限流的静态住宅代理或轮换住宅代理。代理密码只保存在本地 `.dev.vars` 和 Cloudflare Worker Secret 中。配置后运行 `npm run deploy:one-click`，健康检查返回的 `youtubeProxy` 应为 `true`，`youtubeProxyCount` 应等于配置的节点数；这只表示配置生效，不代表代理 IP 已通过 YouTube 风控。
 
 ### Gemini 流式输出
 
@@ -134,4 +134,4 @@ curl https://<your-worker>.workers.dev/api/health
 
 - `POST /api/generate` — `{ videoUrl, instruction? }`，返回 NDJSON 流。
 - `POST /api/summary` — `{ generationId, sectionIndex }`，返回固定结构的 5W1H。
-- `GET /api/health` — 返回运行模式（`gemini` 或 `demo`）及 `youtubeProxy` 是否启用。
+- `GET /api/health` — 返回运行模式（`gemini` 或 `demo`）、`youtubeProxy` 是否启用及代理节点数。

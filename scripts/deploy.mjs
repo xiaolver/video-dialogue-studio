@@ -93,26 +93,24 @@ async function verifyDeployment(expectYoutubeProxy) {
       const response = await fetch(`${publicUrl}/api/health`, { signal: AbortSignal.timeout(10_000) });
       if (response.ok) {
         const health = await response.json();
-        if (health.mode !== "gemini") fail("线上服务可访问，但 GEMINI_API_KEY 尚未生效。");
-        if (expectYoutubeProxy && !health.youtubeProxy) {
-          fail("线上服务可访问，但 WEBSHARE_PROXY_URL 尚未生效。");
+        if (health.mode === "gemini" && (!expectYoutubeProxy || health.youtubeProxy)) {
+          console.log(`部署完成：${publicUrl}`);
+          console.log(`运行模式：${health.mode}`);
+          console.log(`YouTube 代理：${health.youtubeProxy ? `已启用（${health.youtubeProxyCount ?? 1} 个节点）` : "未配置"}`);
+          return;
         }
-        console.log(`部署完成：${publicUrl}`);
-        console.log(`运行模式：${health.mode}`);
-        console.log(`YouTube 代理：${health.youtubeProxy ? "已启用" : "未配置"}`);
-        return;
       }
     } catch {
       // DNS and the custom-domain certificate may need a short propagation window.
     }
     await new Promise((resolvePromise) => setTimeout(resolvePromise, 3_000));
   }
-  fail(`部署已提交，但暂时无法验证 ${publicUrl}。请稍后再次访问。`);
+  fail(`部署已提交，但 Gemini 或代理 Secret 暂未完成传播。请稍后再次运行健康检查。`);
 }
 
 if (!existsSync(wrangler)) fail("依赖尚未安装，请先运行 npm install。");
 const geminiKey = loadSecret("GEMINI_API_KEY", true);
-const webshareProxyUrl = loadSecret("WEBSHARE_PROXY_URL");
+const webshareProxyUrls = loadSecret("WEBSHARE_PROXY_URLS") || loadSecret("WEBSHARE_PROXY_URL");
 
 console.log("[1/4] 检查 Cloudflare 登录状态");
 const identity = runWranglerWithRetry(["whoami"]);
@@ -137,14 +135,14 @@ if (deployment.status !== 0) {
 console.log("\n[3/4] 更新线上 Secrets");
 const geminiSecret = runWranglerWithRetry(["secret", "put", "GEMINI_API_KEY"], `${geminiKey}\n`);
 if (geminiSecret.status !== 0) fail("Worker 已部署，但 Gemini Secret 更新失败。");
-if (webshareProxyUrl) {
+if (webshareProxyUrls) {
   const proxySecret = runWranglerWithRetry(
-    ["secret", "put", "WEBSHARE_PROXY_URL"],
-    `${webshareProxyUrl}\n`,
+    ["secret", "put", "WEBSHARE_PROXY_URLS"],
+    `${webshareProxyUrls}\n`,
   );
   if (proxySecret.status !== 0) fail("Worker 已部署，但 Webshare Secret 更新失败。");
 } else {
-  console.log("未配置 WEBSHARE_PROXY_URL，本次不更新线上 YouTube 代理 Secret。");
+  console.log("未配置 WEBSHARE_PROXY_URLS，本次不更新线上 YouTube 代理 Secret。");
 }
 
-await verifyDeployment(Boolean(webshareProxyUrl));
+await verifyDeployment(Boolean(webshareProxyUrls));
