@@ -85,7 +85,7 @@ WEBSHARE_PROXY_URL="http://username:password@proxy-host:proxy-port"
 # WEBSHARE_PROXY_URL="proxy-host:proxy-port:username:password"
 ```
 
-建议选择 Webshare 的用户名/密码认证 HTTP 代理，不要使用 IP 白名单认证，因为 Worker 出口 IP 不固定。代理密码只保存在本地 `.dev.vars` 和 Cloudflare Worker Secret 中。配置后运行 `npm run deploy:one-click`，健康检查返回的 `youtubeProxy` 应为 `true`。
+建议选择 Webshare 的用户名/密码认证 HTTP 代理，不要使用 IP 白名单认证，因为 Worker 出口 IP 不固定。代理端口必须避开 `25`、`80` 和 `443`；例如 Webshare 轮换端点常用的 `75`，或代理列表分配的其他高位端口。代理密码只保存在本地 `.dev.vars` 和 Cloudflare Worker Secret 中。配置后运行 `npm run deploy:one-click`，健康检查返回的 `youtubeProxy` 应为 `true`。
 
 ### Gemini 流式输出
 

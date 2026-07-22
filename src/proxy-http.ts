@@ -14,6 +14,14 @@ export interface ParsedHttpResponse {
 
 const textDecoder = new TextDecoder();
 
+function validateProxyPort(port: number): number {
+  if (!Number.isInteger(port) || port < 1 || port > 65_535) throw new Error("代理端口无效。");
+  if ([25, 80, 443].includes(port)) {
+    throw new Error("Cloudflare TCP Socket 不支持该代理端口，请在 Webshare 选择非 25/80/443 端口。");
+  }
+  return port;
+}
+
 export function parseProxyUrl(input: string): ProxyConfig {
   const value = input.trim();
   if (!value) throw new Error("Webshare 代理配置为空。");
@@ -24,8 +32,7 @@ export function parseProxyUrl(input: string): ProxyConfig {
     if (!url.hostname || !url.port || !url.username || !url.password) {
       throw new Error("代理 URL 必须包含主机、端口、用户名和密码。");
     }
-    const port = Number(url.port);
-    if (!Number.isInteger(port) || port < 1 || port > 65_535) throw new Error("代理端口无效。");
+    const port = validateProxyPort(Number(url.port));
     return {
       hostname: url.hostname,
       port,
@@ -40,7 +47,7 @@ export function parseProxyUrl(input: string): ProxyConfig {
   if (!hostname || !Number.isInteger(port) || port < 1 || port > 65_535 || !username || !password) {
     throw new Error("代理配置应为 IP:端口:用户名:密码，或标准 http:// URL。");
   }
-  return { hostname, port, username, password };
+  return { hostname, port: validateProxyPort(port), username, password };
 }
 
 export function isAllowedYouTubeHost(hostname: string): boolean {

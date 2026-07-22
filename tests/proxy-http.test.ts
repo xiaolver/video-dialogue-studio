@@ -18,6 +18,11 @@ describe("parseProxyUrl", () => {
   });
 
   it("rejects incomplete credentials", () => expect(() => parseProxyUrl("1.2.3.4:4321")).toThrow());
+
+  it("rejects ports blocked or reserved by Cloudflare TCP sockets", () => {
+    expect(() => parseProxyUrl("1.2.3.4:80:demo-user:secret")).toThrow(/非 25\/80\/443/);
+    expect(() => parseProxyUrl("http://demo-user:secret@1.2.3.4:443")).toThrow(/非 25\/80\/443/);
+  });
 });
 
 describe("YouTube proxy target allowlist", () => {
