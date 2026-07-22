@@ -12,17 +12,30 @@ function fail(message) {
   process.exit(1);
 }
 
-function loadGeminiKey() {
-  if (process.env.GEMINI_API_KEY?.trim()) return process.env.GEMINI_API_KEY.trim();
+let localVars;
+
+function loadLocalVars() {
+  if (localVars) return localVars;
   const varsPath = resolve(root, ".dev.vars");
   if (!existsSync(varsPath)) {
     fail("未找到 .dev.vars。请复制 .dev.vars.example 并配置 GEMINI_API_KEY。");
   }
-  const line = readFileSync(varsPath, "utf8")
-    .split(/\r?\n/)
-    .find((item) => item.trim().startsWith("GEMINI_API_KEY="));
-  const value = line?.slice(line.indexOf("=") + 1).trim().replace(/^(["'])(.*)\1$/, "$2");
-  if (!value) fail(".dev.vars 中没有有效的 GEMINI_API_KEY。");
+  localVars = new Map();
+  for (const rawLine of readFileSync(varsPath, "utf8").split(/\r?\n/)) {
+    const line = rawLine.trim();
+    if (!line || line.startsWith("#")) continue;
+    const separator = line.indexOf("=");
+    if (separator < 1) continue;
+    const name = line.slice(0, separator).trim();
+    const value = line.slice(separator + 1).trim().replace(/^(["'])(.*)\1$/, "$2");
+    localVars.set(name, value);
+  }
+  return localVars;
+}
+
+function loadSecret(name, required = false) {
+  const value = process.env[name]?.trim() || loadLocalVars().get(name)?.trim();
+  if (required && !value) fail(`.dev.vars 中没有有效的 ${name}。`);
   return value;
 }
 
@@ -73,7 +86,7 @@ function runWranglerWithRetry(args, input, attempts = 3) {
   return result;
 }
 
-async function verifyDeployment() {
+async function verifyDeployment(expectYoutubeProxy) {
   console.log(`\n[4/4] 验证 ${publicUrl}/api/health`);
   for (let attempt = 1; attempt <= 8; attempt += 1) {
     try {
@@ -81,8 +94,12 @@ async function verifyDeployment() {
       if (response.ok) {
         const health = await response.json();
         if (health.mode !== "gemini") fail("线上服务可访问，但 GEMINI_API_KEY 尚未生效。");
+        if (expectYoutubeProxy && !health.youtubeProxy) {
+          fail("线上服务可访问，但 WEBSHARE_PROXY_URL 尚未生效。");
+        }
         console.log(`部署完成：${publicUrl}`);
         console.log(`运行模式：${health.mode}`);
+        console.log(`YouTube 代理：${health.youtubeProxy ? "已启用" : "未配置"}`);
         return;
       }
     } catch {
@@ -94,7 +111,8 @@ async function verifyDeployment() {
 }
 
 if (!existsSync(wrangler)) fail("依赖尚未安装，请先运行 npm install。");
-const geminiKey = loadGeminiKey();
+const geminiKey = loadSecret("GEMINI_API_KEY", true);
+const webshareProxyUrl = loadSecret("WEBSHARE_PROXY_URL");
 
 console.log("[1/4] 检查 Cloudflare 登录状态");
 const identity = runWranglerWithRetry(["whoami"]);
@@ -116,8 +134,17 @@ if (deployment.status !== 0) {
   fail("Wrangler 部署失败，请查看上方错误信息。");
 }
 
-console.log("\n[3/4] 更新线上 GEMINI_API_KEY Secret");
-const secret = runWranglerWithRetry(["secret", "put", "GEMINI_API_KEY"], `${geminiKey}\n`);
-if (secret.status !== 0) fail("Worker 已部署，但 Gemini Secret 更新失败。");
+console.log("\n[3/4] 更新线上 Secrets");
+const geminiSecret = runWranglerWithRetry(["secret", "put", "GEMINI_API_KEY"], `${geminiKey}\n`);
+if (geminiSecret.status !== 0) fail("Worker 已部署，但 Gemini Secret 更新失败。");
+if (webshareProxyUrl) {
+  const proxySecret = runWranglerWithRetry(
+    ["secret", "put", "WEBSHARE_PROXY_URL"],
+    `${webshareProxyUrl}\n`,
+  );
+  if (proxySecret.status !== 0) fail("Worker 已部署，但 Webshare Secret 更新失败。");
+} else {
+  console.log("未配置 WEBSHARE_PROXY_URL，本次不更新线上 YouTube 代理 Secret。");
+}
 
-await verifyDeployment();
+await verifyDeployment(Boolean(webshareProxyUrl));

@@ -1,3 +1,7 @@
 GEMINI_API_KEY=your_google_ai_studio_key
 # Optional. The default is configured in wrangler.jsonc.
 GEMINI_MODEL=gemini-flash-latest
+
+# Optional YouTube captcha fallback. Both formats are supported:
+# WEBSHARE_PROXY_URL=http://username:password@proxy-host:port
+# WEBSHARE_PROXY_URL=proxy-host:port:username:password

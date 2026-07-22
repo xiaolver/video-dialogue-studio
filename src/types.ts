@@ -3,6 +3,7 @@ export interface Env {
   GENERATION_CONTEXTS: DurableObjectNamespace;
   GEMINI_API_KEY?: string;
   GEMINI_MODEL?: string;
+  WEBSHARE_PROXY_URL?: string;
 }
 
 export interface TranscriptResult {
@@ -10,7 +11,7 @@ export interface TranscriptResult {
   title: string;
   language: string;
   text: string;
-  source: "youtube" | "demo";
+  source: "youtube" | "youtube-proxy" | "demo";
 }
 
 export interface ArticleSection {

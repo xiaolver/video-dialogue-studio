@@ -42,7 +42,7 @@ async function handleGenerate(request: Request, env: Env, execution: ExecutionCo
 
   let transcript;
   try {
-    transcript = await getYouTubeTranscript(videoUrl);
+    transcript = await getYouTubeTranscript(videoUrl, env.WEBSHARE_PROXY_URL);
   } catch (error) {
     return json({ error: errorMessage(error) }, error instanceof TranscriptError && error.code === "INVALID_URL" ? 400 : 422);
   }
@@ -151,7 +151,11 @@ export default {
     if (request.method === "POST" && url.pathname === "/api/generate") return handleGenerate(request, env, execution);
     if (request.method === "POST" && url.pathname === "/api/summary") return handleSummary(request, env);
     if (request.method === "GET" && url.pathname === "/api/health") {
-      return json({ ok: true, mode: env.GEMINI_API_KEY ? "gemini" : "demo" });
+      return json({
+        ok: true,
+        mode: env.GEMINI_API_KEY ? "gemini" : "demo",
+        youtubeProxy: Boolean(env.WEBSHARE_PROXY_URL),
+      });
     }
     if (url.pathname.startsWith("/api/")) return json({ error: "Not found" }, 404);
     return env.ASSETS.fetch(request);

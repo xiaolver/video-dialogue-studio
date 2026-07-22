@@ -165,8 +165,10 @@ async function generate(event) {
         if (event.type === "meta") {
           state.generationId = event.generationId;
           videoTitle.textContent = event.videoTitle;
-          sourceBadge.textContent = event.transcriptSource === "demo" ? "内置字幕" : "YouTube 字幕";
-          sourceBadge.className = `source-badge ${event.transcriptSource === "demo" ? "is-demo" : ""}`;
+          sourceBadge.textContent = event.transcriptSource === "demo"
+            ? "内置字幕"
+            : event.transcriptSource === "youtube-proxy" ? "Webshare 代理字幕" : "YouTube 字幕";
+          sourceBadge.className = `source-badge ${event.transcriptSource === "demo" ? "is-demo" : event.transcriptSource === "youtube-proxy" ? "is-proxy" : ""}`;
           setProgress("正在流式撰写", event.provider === "gemini" ? "Gemini 正在组织章节与对话" : "演示模式 · 配置 API Key 后使用 Gemini", 62);
         } else if (event.type === "delta") {
           state.markdown += event.text;

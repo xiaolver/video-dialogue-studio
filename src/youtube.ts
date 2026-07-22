@@ -125,14 +125,13 @@ function pickCaptionTrack(tracks: CaptionTrack[]): CaptionTrack {
   return [...tracks].sort((a, b) => score(b) - score(a))[0];
 }
 
-async function fetchLiveTranscript(videoId: string): Promise<TranscriptResult> {
+type YouTubeFetcher = (url: string, headers: HeadersInit) => Promise<Response>;
+
+async function fetchTranscriptWith(videoId: string, fetcher: YouTubeFetcher, source: "youtube" | "youtube-proxy"): Promise<TranscriptResult> {
   const watchUrl = `https://www.youtube.com/watch?v=${videoId}&hl=en`;
-  const response = await fetch(watchUrl, {
-    headers: {
-      "Accept-Language": "en-US,en;q=0.9",
-      "User-Agent": "Mozilla/5.0 (compatible; VideoDialogueStudio/1.0)",
-    },
-    cf: { cacheTtl: 900, cacheEverything: true },
+  const response = await fetcher(watchUrl, {
+    "Accept-Language": "en-US,en;q=0.9",
+    "User-Agent": "Mozilla/5.0 (compatible; VideoDialogueStudio/1.0)",
   });
   if (!response.ok) throw new TranscriptError("YouTube 页面暂时不可访问。", "YOUTUBE_UNAVAILABLE");
 
@@ -146,8 +145,9 @@ async function fetchLiveTranscript(videoId: string): Promise<TranscriptResult> {
 
   const track = pickCaptionTrack(tracks);
   const separator = track.baseUrl.includes("?") ? "&" : "?";
-  const captionsResponse = await fetch(`${track.baseUrl}${separator}fmt=json3`, {
-    headers: { "User-Agent": "Mozilla/5.0 (compatible; VideoDialogueStudio/1.0)" },
+  const captionsResponse = await fetcher(`${track.baseUrl}${separator}fmt=json3`, {
+    "Accept-Language": "en-US,en;q=0.9",
+    "User-Agent": "Mozilla/5.0 (compatible; VideoDialogueStudio/1.0)",
   });
   if (!captionsResponse.ok) throw new TranscriptError("字幕轨道读取失败。", "CAPTION_FETCH_FAILED");
 
@@ -161,17 +161,34 @@ async function fetchLiveTranscript(videoId: string): Promise<TranscriptResult> {
     // Durable Object values are stored separately, but keeping the transcript
     // under ~120 KiB also leaves predictable headroom for UTF-8 content.
     text: transcript.slice(0, 40_000),
-    source: "youtube",
+    source,
   };
 }
 
-export async function getYouTubeTranscript(input: string): Promise<TranscriptResult> {
+const directFetcher: YouTubeFetcher = (url, headers) => fetch(url, {
+  headers,
+  cf: { cacheTtl: 900, cacheEverything: true },
+});
+
+export async function getYouTubeTranscript(input: string, webshareProxyUrl?: string): Promise<TranscriptResult> {
   const videoId = parseYouTubeVideoId(input);
   if (!videoId) throw new TranscriptError("请输入有效的 YouTube 视频链接。", "INVALID_URL");
 
   try {
-    return await fetchLiveTranscript(videoId);
-  } catch (error) {
+    return await fetchTranscriptWith(videoId, directFetcher, "youtube");
+  } catch (directError) {
+    if (webshareProxyUrl) {
+      try {
+        const { webshareProxyFetch } = await import("./proxy");
+        const proxyFetcher: YouTubeFetcher = (url, headers) => webshareProxyFetch(url, webshareProxyUrl, headers);
+        return await fetchTranscriptWith(videoId, proxyFetcher, "youtube-proxy");
+      } catch (proxyError) {
+        if (videoId !== DEMO_VIDEO_ID) {
+          const message = proxyError instanceof Error ? proxyError.message : "代理请求失败。";
+          throw new TranscriptError(`YouTube 直连被拦截，Webshare 回退也失败：${message}`, "PROXY_FAILED");
+        }
+      }
+    }
     if (videoId === DEMO_VIDEO_ID) {
       return {
         videoId,
@@ -181,6 +198,7 @@ export async function getYouTubeTranscript(input: string): Promise<TranscriptRes
         source: "demo",
       };
     }
-    throw error;
+    if (directError instanceof TranscriptError) throw directError;
+    throw new TranscriptError("YouTube 字幕获取失败；如遇验证码，请配置 WEBSHARE_PROXY_URL。", "CAPTIONS_UNAVAILABLE");
   }
 }

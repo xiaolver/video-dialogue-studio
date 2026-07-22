@@ -20,7 +20,7 @@ npm run dev
 项目默认发布到 `https://dialogue.viagoing.com`。首次部署前需要完成三项一次性准备：
 
 1. 安装依赖：`npm install`。
-2. 将 `.dev.vars.example` 复制为 `.dev.vars`，填入 `GEMINI_API_KEY`。`.dev.vars` 已被 Git 忽略。
+2. 将 `.dev.vars.example` 复制为 `.dev.vars`，填入 `GEMINI_API_KEY`。如需处理 YouTube 验证码，再填入 Webshare 的 `WEBSHARE_PROXY_URL`。`.dev.vars` 已被 Git 忽略。
 3. 运行 `npx wrangler login` 登录 Cloudflare。新账户还需打开 [Workers & Pages](https://dash.cloudflare.com/?to=/:account/workers-and-pages)，按页面提示注册一次 `workers.dev` 子域名；这是 Cloudflare 创建 Worker 的账户级前置条件，即使最终只使用自定义域名也需要完成一次。
 
 以后首次发布或修改代码后，都只需要运行：
@@ -33,8 +33,8 @@ npm run deploy:one-click
 
 - 检查 Cloudflare 登录状态，未登录时启动 OAuth；
 - 上传 Worker、静态资源和 Durable Object 迁移；
-- 从本地 `.dev.vars` 安全读取 Key，并更新线上 `GEMINI_API_KEY` Secret；
-- 请求 `https://dialogue.viagoing.com/api/health`，确认公开地址和 Gemini 模式都已生效。
+- 从本地 `.dev.vars` 安全读取 Key，更新线上 `GEMINI_API_KEY`；若已配置代理，同时更新 `WEBSHARE_PROXY_URL` Secret；
+- 请求 `https://dialogue.viagoing.com/api/health`，确认公开地址、Gemini 模式和代理配置都已生效。
 - 对 Cloudflare API 的偶发连接超时自动重试；只有明确返回未登录时才重新启动 OAuth。
 
 密钥只通过标准输入传给 Wrangler，不会出现在命令参数、部署配置或 Git 仓库中。如果要更换域名，同时修改 `wrangler.jsonc` 中的 `routes[0].pattern` 和 `scripts/deploy.mjs` 中的 `publicUrl`。
@@ -52,11 +52,13 @@ npm run deploy:one-click
 ├─ src/
 │  ├─ index.ts             # Worker 入口、API 路由与流式响应
 │  ├─ youtube.ts           # 视频 ID、YouTube 字幕和示例回退
+│  ├─ proxy.ts             # TCP Socket、HTTP CONNECT 与隧道内 TLS 请求
+│  ├─ proxy-http.ts        # Webshare 配置和原始 HTTP 响应解析
 │  ├─ gemini.ts            # Gemini 流式文章与结构化总结
 │  ├─ context.ts           # Durable Object 上下文、缓存与定时清理
 │  ├─ sections.ts          # Markdown 章节解析
 │  └─ types.ts             # 环境绑定与业务类型
-├─ tests/                  # 视频解析和章节解析单元测试
+├─ tests/                  # 视频、章节和代理 HTTP 解析单元测试
 ├─ .dev.vars.example       # 本地密钥模板
 ├─ wrangler.jsonc          # Worker、资源绑定、迁移和自定义域名
 ├─ package.json            # 开发、测试和一键部署命令
@@ -69,7 +71,21 @@ npm run deploy:one-click
 
 服务端校验并提取 11 位视频 ID，请求 YouTube watch 页面中的 `ytInitialPlayerResponse`，优先选择人工中文字幕，其次是英文字幕与自动字幕。字幕轨道以 JSON3 格式读取，合并片段并保留 `[mm:ss]` 时间戳。输入、字幕长度都有限制，避免异常请求拖垮 Worker。
 
-YouTube 可能对数据中心 IP 返回验证码。对题目指定的 `xRh2sVcNXQ8`，项目内置了一份经过整理的演示字幕作为稳定回退；其他视频会返回明确错误，而不会悄悄生成无来源内容。生产环境如需进一步提高成功率，可在独立字幕服务中接入代理，再由 Worker 调用该服务。
+YouTube 可能对数据中心 IP 返回验证码。现在的处理顺序是：先用 Worker 原生 `fetch` 直连；遇到验证码、字幕轨道缺失或请求失败时，若配置了 Webshare，则自动通过 Cloudflare Worker TCP Socket 重试；代理仍失败才返回明确错误。对题目指定的 `xRh2sVcNXQ8` 仍保留演示字幕作为最后回退，不会悄悄为其他视频生成无来源内容。
+
+代理使用 HTTP CONNECT，而不是把普通 `fetch` 指向代理：Worker 先用 `connect()` 建立到 Webshare 节点的 TCP 连接，发送带 Basic 认证的 `CONNECT youtube-host:443`，收到 200 后通过 `startTls({ expectedServerHostname })` 在隧道内完成 YouTube TLS，再发送原始 HTTP/1.1 请求。重定向目标只允许 YouTube、YouTube NoCookie 和 GoogleVideo 域名，响应大小限制为 8 MiB，因此这不是一个可被外部滥用的开放代理。
+
+在 `.dev.vars` 中任选一种 Webshare HTTP 代理格式：
+
+```dotenv
+# 标准 URL 格式（推荐）
+WEBSHARE_PROXY_URL="http://username:password@proxy-host:proxy-port"
+
+# 或 Webshare 下载列表常见格式
+# WEBSHARE_PROXY_URL="proxy-host:proxy-port:username:password"
+```
+
+建议选择 Webshare 的用户名/密码认证 HTTP 代理，不要使用 IP 白名单认证，因为 Worker 出口 IP 不固定。代理密码只保存在本地 `.dev.vars` 和 Cloudflare Worker Secret 中。配置后运行 `npm run deploy:one-click`，健康检查返回的 `youtubeProxy` 应为 `true`。
 
 ### Gemini 流式输出
 
@@ -118,4 +134,4 @@ curl https://<your-worker>.workers.dev/api/health
 
 - `POST /api/generate` — `{ videoUrl, instruction? }`，返回 NDJSON 流。
 - `POST /api/summary` — `{ generationId, sectionIndex }`，返回固定结构的 5W1H。
-- `GET /api/health` — 返回运行模式（`gemini` 或 `demo`）。
+- `GET /api/health` — 返回运行模式（`gemini` 或 `demo`）及 `youtubeProxy` 是否启用。
