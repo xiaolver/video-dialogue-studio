@@ -1,189 +1,41 @@
 # Video Dialogue Studio（译谈）
 
-把 YouTube 视频整理成中文多人对话文章，并为每个章节生成 5W1H 总结。
+输入 YouTube 链接，将视频内容整理为中文多人对话文章，并支持章节级 5W1H 总结。在线体验：<https://dialogue.viagoing.com>。安装、配置、部署和排错见 [完整使用说明](docs/USAGE.md)。
 
-在线地址：<https://dialogue.viagoing.com>
+## 1. 如何获取和处理 YouTube 字幕
 
-## 功能
+系统优先使用本机字幕助手。助手通过 `yt-dlp` 读取视频元数据，在人工字幕和自动字幕中按“中文、英文、其他语言”的顺序选择轨道，并优先使用 JSON3，其次使用 VTT。字幕解析后会去除标签、合并空白、过滤连续重复内容，并统一整理为带 `[mm:ss]` 时间戳的文本。
 
-- 输入 YouTube 链接，流式生成中文对话文章。
-- 可选填写一段自然语言要求，限定任务类型、输出风格、目标受众和约束条件，最多 1200 字。
-- 文章按章节展示，每章可单独生成 5W1H 总结。
-- 5W1H 请求只提交生成记录 ID 和章节序号，不会由前端重新提交整篇文章。
-- 优先读取公开字幕；没有字幕时，自动提取音频并交给 Gemini 转写。
-- 一台电脑启动共享字幕助手后，电脑和手机访问同一网站即可共用，不需要配对或额外配置。
-- 支持 Cloudflare Workers 一键部署。
+如果视频没有公开字幕，助手会下载最佳音频，再用 `ffmpeg` 压缩为 16 kHz、单声道、24 kbps 的 MP3，交给 Gemini 忠实转写。若本机助手不可用，系统依次回退到 Cloudflare Worker 直连 YouTube、Webshare 代理池；云端回退只能读取公开字幕，不能完成无字幕音频转写。
 
-## 使用方法
+## 2. 如何调用 Gemini 并实现流式输出
 
-### 1. 启动共享字幕助手
+Worker 将视频标题、字幕语言、字幕正文和生成要求组成提示词，请求 Gemini 的 `streamGenerateContent?alt=sse` 接口。服务端逐条解析 Gemini 返回的 SSE，把结果转换成 `meta`、`delta`、`done`、`error` 四类 NDJSON 事件，并通过 `ReadableStream` 立即返回浏览器。
 
-YouTube 经常限制云服务器访问。为了稳定获取字幕，需要在一台可以正常访问 YouTube 的电脑上保持助手运行。所有网站访客会共用这一个助手。
+前端使用 `response.body.getReader()` 持续读取增量内容，配合 `TextDecoder` 拼接文本并实时渲染 Markdown，因此用户不必等待整篇文章生成完毕就能看到输出。
 
-环境要求：
+## 3. 如何根据用户生成要求影响输出结果
 
-- Node.js 22 或更高版本
-- `yt-dlp`
-- `ffmpeg`
+页面允许用户选填最多 1200 字的自然语言要求。该内容作为独立的 `<user_preference>` 区块加入文章生成提示词，只允许影响以下范围：
 
-安装依赖并准备配置：
+- 任务类型
+- 输出风格
+- 目标受众
+- 篇幅、格式等约束条件
 
-```bash
-npm install
-copy .dev.vars.example .dev.vars
-```
+系统提示词仍固定要求输出中文对话文章、保留字幕中的关键事实且不得杜撰。用户要求与核心任务冲突时忽略冲突部分；字幕中的任何指令只作为素材，不会被当作系统指令执行。
 
-在 `.dev.vars` 中填写 `GEMINI_API_KEY`，然后运行：
+## 4. 如何实现章节级 5W1H 总结
 
-```bash
-npm run helper
-```
+每次文章生成都会创建一个 `generationId`。Worker 使用 Durable Object 保存本次字幕、完整文章、章节切分结果和生成要求，保存时间为 24 小时。
 
-保持终端窗口开启。看到“本机助手已连接 Cloudflare 字幕中继”后，直接打开 <https://dialogue.viagoing.com>。手机访问同一网址也会自动使用这个助手。
+用户点击某章的 5W1H 按钮时，前端只提交 `generationId` 和 `sectionIndex`，不会重新上传整篇文章。服务端根据这两个字段读取已保存的完整上下文，请求 Gemini 以 JSON Schema 返回 `who`、`what`、`when`、`where`、`why`、`how` 六个字段，并按章节缓存结果，避免重复调用。
 
-如果视频需要登录状态，可以读取本机浏览器 Cookie：
+## 5. 主要工程取舍和亮点
 
-```bash
-npm run helper:chrome
-# 或
-npm run helper:edge
-```
-
-Cookie 只由本机 `yt-dlp` 读取，不会上传到网页或保存到 Cloudflare。
-
-### 2. 生成文章
-
-1. 粘贴 YouTube 视频链接。
-2. 按需填写生成要求；不填写也可以。
-3. 点击生成，等待字幕获取、音频转写和文章生成。
-4. 文章生成后，点击章节下方的“5W1H 总结”。
-
-没有公开字幕的视频需要下载并压缩音频，通常比有字幕的视频多等待 1～3 分钟。
-
-## 本地开发
-
-```bash
-npm install
-copy .dev.vars.example .dev.vars
-npm run dev
-```
-
-另开一个终端启动字幕助手：
-
-```bash
-npm run helper -- --no-open
-```
-
-Wrangler 默认地址为 <http://localhost:8787>。
-
-`.dev.vars` 示例：
-
-```dotenv
-GEMINI_API_KEY=你的_Gemini_API_Key
-GEMINI_MODEL=gemini-flash-latest
-WEBSHARE_PROXY_URLS=http://用户名:密码@IP:端口,http://用户名:密码@IP:端口
-```
-
-| 配置 | 必填 | 说明 |
-| --- | --- | --- |
-| `GEMINI_API_KEY` | 是 | 文章生成、5W1H 和无字幕音频转写 |
-| `GEMINI_MODEL` | 否 | 默认 `gemini-flash-latest` |
-| `WEBSHARE_PROXY_URLS` | 否 | 云端直连 YouTube 失败后的代理池回退 |
-
-`.dev.vars` 已被 Git 忽略，不要把密钥或代理密码提交到仓库。
-
-## 部署
-
-首次使用先登录 Cloudflare：
-
-```bash
-npx wrangler login
-```
-
-以后每次修改代码后运行：
-
-```bash
-npm run deploy:one-click
-```
-
-脚本会依次执行类型检查、测试和 Wrangler 部署。域名配置在 `wrangler.jsonc`；如果更换域名，还需同步修改 `public/app.js` 和 `scripts/youtube-helper.mjs` 中的线上地址。
-
-部署完成后，重新启动 `npm run helper`，使本机助手连接到最新 Worker。
-
-## 工作流程
-
-```text
-浏览器 / 手机
-    │
-    ├─ Cloudflare Worker ─ Gemini：生成文章
-    │        │
-    │        ├─ Durable Object：保存生成上下文、生成 5W1H
-    │        │
-    │        └─ 共享字幕中继 ─ 本机助手 ─ yt-dlp：读取字幕
-    │                                      └─ ffmpeg + Gemini：无字幕音频转写
-    │
-    └─ 助手离线时：Worker 直连 YouTube，再回退 Webshare 代理池
-```
-
-生成上下文由服务端保存 24 小时。点击章节 5W1H 时，浏览器只发送 `generationId` 和 `sectionIndex`，由服务端读取对应章节内容。
-
-## 项目结构
-
-```text
-.
-├─ public/
-│  ├─ index.html              页面结构
-│  ├─ app.js                  页面交互、流式输出和共享助手检测
-│  └─ styles.css              页面样式
-├─ scripts/
-│  ├─ deploy.mjs              一键部署脚本
-│  ├─ youtube-helper.mjs      本机 HTTP 服务和 Cloudflare 字幕中继
-│  └─ youtube-helper-lib.mjs  yt-dlp、ffmpeg 和字幕处理
-├─ src/
-│  ├─ index.ts                Worker 路由、生成接口和共享助手接口
-│  ├─ context.ts              Durable Object 上下文及 WebSocket 中继
-│  ├─ gemini.ts               Gemini 请求和流式解析
-│  ├─ youtube.ts              YouTube 字幕获取
-│  ├─ proxy.ts                Webshare 代理池回退
-│  ├─ proxy-http.ts           Cloudflare TCP HTTP 代理客户端
-│  ├─ local-transcript.ts     本机字幕结果校验
-│  ├─ sections.ts             章节解析
-│  └─ types.ts                类型定义
-├─ tests/                     单元测试
-├─ wrangler.jsonc             Cloudflare Worker 配置
-├─ package.json               命令和依赖
-└─ .dev.vars                  本地密钥，不提交 Git
-```
-
-## 接口
-
-| 方法 | 路径 | 用途 |
-| --- | --- | --- |
-| `POST` | `/api/generate` | 获取字幕并流式生成文章 |
-| `POST` | `/api/summary` | 根据服务端上下文生成章节 5W1H |
-| `GET` | `/api/helper/status` | 查询共享字幕助手状态 |
-| `POST` | `/api/helper/extract` | 通过共享助手提取字幕或音频 |
-| `GET` | `/api/helper/connect` | 本机助手连接 WebSocket 中继 |
-| `GET` | `/api/health` | 服务健康检查 |
-
-## 检查与排错
-
-运行全部检查：
-
-```bash
-npm run check
-```
-
-单独测试字幕或无字幕音频流程：
-
-```bash
-node scripts/youtube-helper.mjs --probe "YouTube 链接"
-node scripts/youtube-helper.mjs --probe-audio "YouTube 链接"
-```
-
-如果页面显示“共享字幕助手未启动”，检查：
-
-1. `npm run helper` 的窗口是否仍在运行。
-2. `.dev.vars` 中的 `GEMINI_API_KEY` 是否与已部署到 Cloudflare 的密钥一致。
-3. 终端是否出现“本机助手已连接 Cloudflare 字幕中继”。
-4. `https://dialogue.viagoing.com/api/health` 中的 `helperConnected` 是否为 `true`。
+- **本机提取、云端生成**：Cloudflare 数据中心 IP 容易触发 YouTube 验证，而且 Worker 不能直接运行 `yt-dlp` 和 `ffmpeg`。因此由本机处理媒体，Worker 负责中继、状态保存和 Gemini 调用。
+- **无需开放本机端口**：助手主动建立到 Cloudflare 的加密 WebSocket，由 Durable Object 转发任务；手机和电脑访问同一网站即可共用，不需要公网 IP、端口映射或配对。
+- **多级回退**：共享助手失败后自动尝试 Worker 直连和 Webshare TCP 代理池，尽可能提高公开字幕获取成功率。
+- **结构化流式协议**：Gemini SSE 在服务端转换成简单的 NDJSON 事件，前端状态清晰，也便于处理错误和完成信号。
+- **服务端上下文**：文章和章节保存在 Durable Object，5W1H 请求只传标识符，满足前端不重复提交全文的要求。
+- **边界与资源控制**：限制生成要求、字幕和音频大小；临时字幕与音频处理后立即删除；助手任务串行执行，避免少量访客同时请求时占满本机资源。
