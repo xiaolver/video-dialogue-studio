@@ -1,6 +1,6 @@
 import { DurableObject } from "cloudflare:workers";
-import { summarizeSection, transcribeAudio } from "./gemini";
-import type { RelayAudioInput } from "./gemini";
+import { summarizeSection, transcribeAudio } from "./openai";
+import type { RelayAudioInput } from "./openai";
 import type { Env, FiveWOneH, StoredGeneration } from "./types";
 
 const GENERATION_KEY = "generation";
@@ -127,8 +127,8 @@ export class GenerationContext extends DurableObject<Env> {
         const summary = await summarizeSection(
           generation,
           sectionIndex,
-          this.env.GEMINI_API_KEY,
-          this.env.GEMINI_MODEL,
+          this.env.OPENAI_API_KEY,
+          this.env.OPENAI_MODEL,
         );
         await this.ctx.storage.put(cacheKey, summary);
         return json({ summary, cached: false });
@@ -170,8 +170,8 @@ export class GenerationContext extends DurableObject<Env> {
         try {
           const transcriptText = await transcribeAudio(
             payload.audio,
-            this.env.GEMINI_API_KEY,
-            this.env.GEMINI_MODEL,
+            this.env.OPENAI_API_KEY,
+            this.env.OPENAI_TRANSCRIPTION_MODEL,
           );
           resolve({
             transcript: {
@@ -183,7 +183,7 @@ export class GenerationContext extends DurableObject<Env> {
             },
           });
         } catch (error) {
-          resolve({ error: error instanceof Error ? error.message : "Gemini 音频转写失败。" });
+          resolve({ error: error instanceof Error ? error.message : "OpenAI 音频转写失败。" });
         }
       }
     } catch {

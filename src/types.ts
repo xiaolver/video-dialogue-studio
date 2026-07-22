@@ -1,8 +1,9 @@
 export interface Env {
   ASSETS: Fetcher;
   GENERATION_CONTEXTS: DurableObjectNamespace;
-  GEMINI_API_KEY?: string;
-  GEMINI_MODEL?: string;
+  OPENAI_API_KEY?: string;
+  OPENAI_MODEL?: string;
+  OPENAI_TRANSCRIPTION_MODEL?: string;
   WEBSHARE_PROXY_URL?: string;
   WEBSHARE_PROXY_URLS?: string;
 }

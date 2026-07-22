@@ -1,3 +1,4 @@
-GEMINI_API_KEY=
-GEMINI_MODEL=gemini-flash-latest
+OPENAI_API_KEY=
+OPENAI_MODEL=gpt-5.6-luna
+OPENAI_TRANSCRIPTION_MODEL=gpt-4o-mini-transcribe
 # WEBSHARE_PROXY_URLS=http://username:password@proxy-host:proxy-port

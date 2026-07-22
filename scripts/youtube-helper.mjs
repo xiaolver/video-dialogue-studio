@@ -159,7 +159,7 @@ function openBrowser(url) {
 }
 
 async function loadRelayProtocol() {
-  let apiKey = process.env.GEMINI_API_KEY?.trim();
+  let apiKey = process.env.OPENAI_API_KEY?.trim();
   if (!apiKey) {
     try {
       const variables = await readFile(new URL("../.dev.vars", import.meta.url), "utf8");
@@ -167,7 +167,7 @@ async function loadRelayProtocol() {
         const line = rawLine.trim();
         if (!line || line.startsWith("#")) continue;
         const separator = line.indexOf("=");
-        if (separator < 1 || line.slice(0, separator).trim() !== "GEMINI_API_KEY") continue;
+        if (separator < 1 || line.slice(0, separator).trim() !== "OPENAI_API_KEY") continue;
         apiKey = line.slice(separator + 1).trim().replace(/^(\"|')(.*)\1$/, "$2");
         break;
       }
@@ -175,7 +175,7 @@ async function loadRelayProtocol() {
       // Report the missing key below.
     }
   }
-  if (!apiKey) throw new Error(".dev.vars 中缺少 GEMINI_API_KEY，本机助手无法连接线上 Worker。");
+  if (!apiKey) throw new Error(".dev.vars 中缺少 OPENAI_API_KEY，本机助手无法连接线上 Worker。");
   return `helper-${createHash("sha256").update(apiKey).digest("hex")}`;
 }
 
@@ -206,8 +206,8 @@ function connectCloudRelay({ protocol, browser, relayState }) {
         } catch (error) {
           if (error instanceof NoCaptionsError) {
             try {
-              process.stdout.write("视频没有公开字幕，正在下载并压缩音频交给 Gemini 转写。\n");
-              const audio = await extractAudioForTranscription(error.videoUrl, error.metadata, { browser });
+              process.stdout.write("视频没有公开字幕，正在下载并压缩音频交给 OpenAI 转写。\n");
+              const audio = await extractAudioForTranscription(error.videoUrl, error.metadata, { browser: error.browser || browser });
               socket.send(JSON.stringify({ type: "audio", requestId: payload.requestId, audio }));
               return;
             } catch (audioError) {
@@ -271,7 +271,7 @@ async function main() {
     process.stdout.write(`\nYouTube 本机字幕助手已启动：http://${HOST}:${PORT}\n`);
     process.stdout.write("请保持此窗口开启；所有网页和手机访问都会共用这个字幕助手。\n");
     if (options.browser) process.stdout.write(`已启用本机 ${options.browser} Cookie（Cookie 不会上传到云端）。\n`);
-    else process.stdout.write("当前使用本机网络和公开字幕，不读取浏览器 Cookie。\n");
+    else process.stdout.write("默认先读取公开字幕；遇到 429 或验证码时会自动尝试本机 Chrome、Edge 登录态。\n");
     connectCloudRelay({ protocol: relayProtocol, browser: options.browser, relayState });
     if (options.open) openBrowser(publicUrl);
   });

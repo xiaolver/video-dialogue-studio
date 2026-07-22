@@ -1,4 +1,4 @@
-import { streamArticle } from "./gemini";
+import { streamArticle } from "./openai";
 import { validateLocalTranscript } from "./local-transcript";
 import { parseArticleSections } from "./sections";
 import type { Env, StoredGeneration, TranscriptResult } from "./types";
@@ -61,8 +61,8 @@ function helperStub(env: Env): DurableObjectStub {
 }
 
 async function expectedHelperProtocol(env: Env): Promise<string | null> {
-  if (!env.GEMINI_API_KEY) return null;
-  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(env.GEMINI_API_KEY));
+  if (!env.OPENAI_API_KEY) return null;
+  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(env.OPENAI_API_KEY));
   return `helper-${[...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, "0")).join("")}`;
 }
 
@@ -158,10 +158,10 @@ async function handleGenerate(request: Request, env: Env, execution: ExecutionCo
       videoTitle: transcript.title,
       transcriptSource: transcript.source,
       transcriptLanguage: transcript.language,
-      provider: env.GEMINI_API_KEY ? "gemini" : "demo",
+      provider: env.OPENAI_API_KEY ? "openai" : "demo",
     });
     try {
-      for await (const delta of streamArticle(transcript, instruction, env.GEMINI_API_KEY, env.GEMINI_MODEL)) {
+      for await (const delta of streamArticle(transcript, instruction, env.OPENAI_API_KEY, env.OPENAI_MODEL)) {
         article += delta;
         send({ type: "delta", text: delta });
       }
@@ -242,7 +242,7 @@ export default {
         .catch(() => ({}));
       return withApiCors(request, json({
         ok: true,
-        mode: env.GEMINI_API_KEY ? "gemini" : "demo",
+        mode: env.OPENAI_API_KEY ? "openai" : "demo",
         youtubeProxy: Boolean(proxySetting),
         youtubeProxyCount: proxySetting?.split(/[\r\n,;]+/).filter((value) => value.trim()).length ?? 0,
         helperRelay: true,

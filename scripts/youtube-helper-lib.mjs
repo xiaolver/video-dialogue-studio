@@ -7,14 +7,45 @@ import { promisify } from "node:util";
 const execFileAsync = promisify(execFile);
 const MAX_TRANSCRIPT_LENGTH = 40_000;
 const MAX_AUDIO_BYTES = 12 * 1024 * 1024;
+const MIN_YT_DLP_INTERVAL_MS = 1_500;
+const TRANSCRIPT_CACHE_TTL_MS = 6 * 60 * 60 * 1_000;
+const AUDIO_CACHE_TTL_MS = 2 * 60 * 60 * 1_000;
+const transcriptCache = new Map();
+const noCaptionsCache = new Map();
+const audioCache = new Map();
+let nextYtDlpStartAt = 0;
 
 export class NoCaptionsError extends Error {
-  constructor(message, metadata, videoUrl) {
+  constructor(message, metadata, videoUrl, browser) {
     super(message);
     this.name = "NoCaptionsError";
     this.metadata = metadata;
     this.videoUrl = videoUrl;
+    this.browser = browser;
   }
+}
+
+function cachedValue(cache, key) {
+  const entry = cache.get(key);
+  if (!entry) return null;
+  if (entry.expiresAt <= Date.now()) {
+    cache.delete(key);
+    return null;
+  }
+  return entry.value;
+}
+
+function cacheValue(cache, key, value, ttl, maximumEntries) {
+  if (cache.size >= maximumEntries) cache.delete(cache.keys().next().value);
+  cache.set(key, { value, expiresAt: Date.now() + ttl });
+}
+
+async function runYtDlpCommand(binary, args, options) {
+  const startAt = Math.max(Date.now(), nextYtDlpStartAt);
+  nextYtDlpStartAt = startAt + MIN_YT_DLP_INTERVAL_MS;
+  const delay = startAt - Date.now();
+  if (delay > 0) await new Promise((resolve) => setTimeout(resolve, delay));
+  return execFileAsync(binary, args, options);
 }
 
 export function parseYouTubeVideoId(input) {
@@ -154,12 +185,19 @@ function friendlyYtDlpError(error) {
   return detail.split("\n").slice(-4).join("\n").slice(0, 800);
 }
 
+function isYouTubeRateError(error) {
+  return /429|限流|验证码|登录态|not a bot/i.test(error instanceof Error ? error.message : "");
+}
+
 async function runYtDlp(videoUrl, { browser, binary = process.env.YT_DLP_BIN || "yt-dlp" } = {}) {
-  const args = ["--dump-single-json", "--skip-download", "--no-warnings", "--socket-timeout", "20"];
+  const args = [
+    "--dump-single-json", "--skip-download", "--no-warnings", "--socket-timeout", "20",
+    "--retries", "3", "--retry-sleep", "http:linear=2::6", "--sleep-requests", "0.75",
+  ];
   if (browser) args.push("--cookies-from-browser", browser);
   args.push(videoUrl);
   try {
-    const { stdout } = await execFileAsync(binary, args, {
+    const { stdout } = await runYtDlpCommand(binary, args, {
       encoding: "utf8",
       timeout: 90_000,
       maxBuffer: 12 * 1024 * 1024,
@@ -182,13 +220,17 @@ async function downloadCaption(videoUrl, caption, { browser, binary = process.en
     "--sub-format", extension,
     "--no-warnings",
     "--socket-timeout", "20",
+    "--retries", "3",
+    "--retry-sleep", "http:linear=2::6",
+    "--sleep-requests", "0.75",
+    "--sleep-subtitles", "1",
     "--paths", directory,
     "--output", "caption.%(ext)s",
   ];
   if (browser) args.push("--cookies-from-browser", browser);
   args.push(videoUrl);
   try {
-    await execFileAsync(binary, args, {
+    await runYtDlpCommand(binary, args, {
       encoding: "utf8",
       timeout: 90_000,
       maxBuffer: 4 * 1024 * 1024,
@@ -208,13 +250,63 @@ async function downloadCaption(videoUrl, caption, { browser, binary = process.en
 export async function extractTranscript(videoUrl, options = {}) {
   const videoId = parseYouTubeVideoId(videoUrl);
   if (!videoId) throw new Error("请输入有效的 YouTube 视频链接。");
+  const cachedTranscript = cachedValue(transcriptCache, videoId);
+  if (cachedTranscript) return cachedTranscript;
   const normalizedUrl = `https://www.youtube.com/watch?v=${videoId}`;
-  const metadata = await runYtDlp(normalizedUrl, options);
-  const caption = pickCaption(metadata);
-  if (!caption) {
-    throw new NoCaptionsError("该视频没有公开字幕，正在改用音频转写。", metadata, normalizedUrl);
+  const cachedNoCaptions = cachedValue(noCaptionsCache, videoId);
+  if (cachedNoCaptions) {
+    throw new NoCaptionsError("该视频没有公开字幕，正在改用音频转写。", cachedNoCaptions.metadata, normalizedUrl, cachedNoCaptions.browser);
   }
-  const raw = await downloadCaption(normalizedUrl, caption, options);
+
+  let metadata;
+  let effectiveBrowser = options.browser;
+  try {
+    metadata = await runYtDlp(normalizedUrl, options);
+  } catch (initialError) {
+    const rateLimited = isYouTubeRateError(initialError);
+    if (options.browser || !rateLimited) throw initialError;
+    for (const browser of ["chrome", "edge"]) {
+      try {
+        metadata = await runYtDlp(normalizedUrl, { ...options, browser });
+        effectiveBrowser = browser;
+        break;
+      } catch {
+        // Try the next installed browser. The original rate-limit error is clearer if all fail.
+      }
+    }
+    if (!metadata) {
+      throw new Error(`${initialError instanceof Error ? initialError.message : "YouTube 请求被限流。"} 已自动尝试 Chrome 和 Edge 登录态，但仍未成功；请等待限流解除或切换本机网络。`);
+    }
+  }
+  let caption = pickCaption(metadata);
+  if (!caption) {
+    cacheValue(noCaptionsCache, videoId, { metadata, browser: effectiveBrowser }, TRANSCRIPT_CACHE_TTL_MS, 20);
+    throw new NoCaptionsError("该视频没有公开字幕，正在改用音频转写。", metadata, normalizedUrl, effectiveBrowser);
+  }
+  let raw;
+  try {
+    raw = await downloadCaption(normalizedUrl, caption, { ...options, browser: effectiveBrowser });
+  } catch (initialError) {
+    if (options.browser || !isYouTubeRateError(initialError)) throw initialError;
+    for (const browser of ["chrome", "edge"].filter((candidate) => candidate !== effectiveBrowser)) {
+      try {
+        const browserMetadata = await runYtDlp(normalizedUrl, { ...options, browser });
+        const browserCaption = pickCaption(browserMetadata);
+        if (!browserCaption) continue;
+        const browserRaw = await downloadCaption(normalizedUrl, browserCaption, { ...options, browser });
+        metadata = browserMetadata;
+        caption = browserCaption;
+        effectiveBrowser = browser;
+        raw = browserRaw;
+        break;
+      } catch {
+        // Try the next installed browser.
+      }
+    }
+    if (!raw) {
+      throw new Error(`${initialError instanceof Error ? initialError.message : "YouTube 字幕请求被限流。"} 已自动尝试 Chrome 和 Edge 登录态，但仍未成功；请等待限流解除或切换本机网络。`);
+    }
+  }
   let text;
   if (String(caption.format.ext).toLowerCase() === "json3") {
     try {
@@ -226,18 +318,22 @@ export async function extractTranscript(videoUrl, options = {}) {
     text = vttToTranscript(raw);
   }
   if (!text) throw new Error("字幕轨道读取成功，但内容为空。");
-  return {
+  const result = {
     videoId,
     title: String(metadata.title || `YouTube 视频 ${videoId}`).slice(0, 300),
     language: String(caption.language || "unknown").slice(0, 40),
     text: text.slice(0, MAX_TRANSCRIPT_LENGTH),
     source: "local-helper",
   };
+  cacheValue(transcriptCache, videoId, result, TRANSCRIPT_CACHE_TTL_MS, 40);
+  return result;
 }
 
 export async function extractAudioForTranscription(videoUrl, metadata, options = {}) {
   const videoId = parseYouTubeVideoId(videoUrl);
   if (!videoId) throw new Error("请输入有效的 YouTube 视频链接。");
+  const cachedAudio = cachedValue(audioCache, videoId);
+  if (cachedAudio) return cachedAudio;
   const directory = await mkdtemp(path.join(os.tmpdir(), "youtube-audio-"));
   const binary = options.binary || process.env.YT_DLP_BIN || "yt-dlp";
   const ffmpegBinary = process.env.FFMPEG_BIN || "ffmpeg";
@@ -246,6 +342,9 @@ export async function extractAudioForTranscription(videoUrl, metadata, options =
     "--no-playlist",
     "--no-warnings",
     "--socket-timeout", "20",
+    "--retries", "3",
+    "--retry-sleep", "http:linear=2::6",
+    "--sleep-requests", "0.75",
     "--paths", directory,
     "--output", "source.%(ext)s",
   ];
@@ -254,7 +353,7 @@ export async function extractAudioForTranscription(videoUrl, metadata, options =
 
   try {
     try {
-      await execFileAsync(binary, args, {
+      await runYtDlpCommand(binary, args, {
         encoding: "utf8",
         timeout: 180_000,
         maxBuffer: 4 * 1024 * 1024,
@@ -289,13 +388,15 @@ export async function extractAudioForTranscription(videoUrl, metadata, options =
     if (!audio.length || audio.length > MAX_AUDIO_BYTES) {
       throw new Error(`压缩后的音频为空或超过 ${MAX_AUDIO_BYTES / 1024 / 1024} MiB 限制。`);
     }
-    return {
+    const result = {
       videoId,
       title: String(metadata?.title || `YouTube 视频 ${videoId}`).slice(0, 300),
       duration: Number(metadata?.duration || 0),
       mimeType: "audio/mpeg",
       data: audio.toString("base64"),
     };
+    cacheValue(audioCache, videoId, result, AUDIO_CACHE_TTL_MS, 3);
+    return result;
   } finally {
     await rm(directory, { recursive: true, force: true }).catch(() => {});
   }
